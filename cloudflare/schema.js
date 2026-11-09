@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT 
 CREATE INDEX IF NOT EXISTS rate_limits_expiry ON rate_limits(expires_at);
 `;
 export async function initialiseDatabase(db) {
-  const statements=SCHEMA.split(';').map(sql=>sql.trim()).filter(Boolean);
-  await db.batch(statements.map(sql=>db.prepare(sql)));
+  const statements = SCHEMA.split(";")
+    .map((sql) => sql.trim())
+    .filter(Boolean);
+  await db.batch(statements.map((sql) => db.prepare(sql)));
 }

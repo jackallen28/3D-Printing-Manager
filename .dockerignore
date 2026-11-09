@@ -1,0 +1,10 @@
+node_modules
+.git
+.env
+.env.*
+.local-data
+test-results
+playwright-report
+.apps-script-build
+release
+dist

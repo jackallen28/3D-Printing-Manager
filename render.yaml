@@ -1,0 +1,29 @@
+# Recommended hosting for 50 MB uploads. Google OAuth setup is required; see DEPLOY-RENDER.md.
+services:
+  - type: web
+    name: bnts-print-studio
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 22
+      - key: STORAGE_MODE
+        value: drive
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CLEANUP_SECRET
+        generateValue: true
+      - key: TEACHER_PASSWORD
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+# Add GOOGLE_REFRESH_TOKEN after the first Google connection in /teacher.

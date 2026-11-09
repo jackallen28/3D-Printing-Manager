@@ -1,0 +1,21 @@
+name: Delete expired print submissions (Node hosting only)
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  cleanup:
+    if: ${{ vars.ENABLE_NODE_CLEANUP == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run retention cleanup
+        env:
+          PRINT_STUDIO_URL: ${{ secrets.PRINT_STUDIO_URL }}
+          PRINT_CLEANUP_SECRET: ${{ secrets.PRINT_CLEANUP_SECRET }}
+        run: |
+          test -n "$PRINT_STUDIO_URL" && test -n "$PRINT_CLEANUP_SECRET"
+          curl --fail-with-body --silent --show-error --retry 2 --retry-delay 20 --max-time 120 \
+            --request POST --header "Authorization: Bearer $PRINT_CLEANUP_SECRET" \
+            "${PRINT_STUDIO_URL%/}/api/maintenance/cleanup"

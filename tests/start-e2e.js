@@ -1,0 +1,23 @@
+import { mkdtemp } from 'node:fs/promises';
+process.env.STORAGE_MODE='local';process.env.NODE_ENV='test';process.env.PORT='4173';process.env.TEACHER_PASSWORD='local-demo-teacher-password';process.env.SESSION_SECRET='test-only-session-secret-with-at-least-32-characters';process.env.CLEANUP_SECRET='test-only-cleanup-secret';process.env.LOCAL_DATA_DIR=await mkdtemp('/tmp/bnts-e2e-');
+const {default:express}=await import('express');
+const {readFile}=await import('node:fs/promises');
+const {createApp}=await import('../server/app.js');
+const {LocalStore}=await import('../server/storage.js');
+const {gasHarness}=await import('./gas-harness.js');
+const {details}=await import('./fixtures.js');
+const {BAMBU_COLOURS}=await import('../shared/catalog.js');
+const gas=gasHarness();
+const session=gas.api({path:'/admin/login',method:'POST',body:{password:'local-demo-teacher-password'}}).data;
+gas.api({...session,path:'/admin/settings',method:'PUT',body:{folderId:'root-folder-123456',schools:[{id:details().schoolId,name:'School A'}],staff:[{id:details().staffId,name:'Alex'}],classes:[],colours:BAMBU_COLOURS.map(c=>c.id),customColourEnabled:true}});
+const store=new LocalStore(process.env.LOCAL_DATA_DIR);await store.init();
+const {app}=createApp({store,password:process.env.TEACHER_PASSWORD,secret:process.env.SESSION_SECRET,cleanupSecret:process.env.CLEANUP_SECRET});
+const testServer=express();
+testServer.post('/__gas/rpc',express.json({limit:'20mb'}),(req,res)=>res.json(gas.api(req.body)));
+testServer.get('/__gas',async(req,res)=>{
+ const bootstrap = `<script>window.google={script:{get run(){const handlers={};return {withSuccessHandler(fn){handlers.success=fn;return this;},withFailureHandler(fn){handlers.failure=fn;return this;},bntsApi(request){fetch('/__gas/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)}).then(r=>r.json()).then(r=>handlers.success(r)).catch(e=>handlers.failure(e));}};}}};</script>`;
+ const html=(await readFile('apps-script/Index.html','utf8')).replace('<?!= bootJson ?>',JSON.stringify({baseUrl:'http://127.0.0.1:4173/__gas',teacher:req.query.page==='teacher'})).replace('<head>','<head>'+bootstrap);
+ res.type('html').send(html);
+});
+testServer.get('/__gas-frame',(req,res)=>res.type('html').send(`<html><body style="margin:0"><iframe title="Apps Script app" style="width:100%;height:100vh;border:0" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads allow-forms" src="/__gas${req.query.teacher?'?page=teacher':''}"></iframe></body></html>`));
+testServer.use(app);testServer.listen(4173,'127.0.0.1');

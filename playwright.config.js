@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({testDir:'./tests/browser',fullyParallel:false,workers:1,timeout:60000,use:{baseURL:'http://127.0.0.1:4173',viewport:{width:1440,height:1000},headless:true,launchOptions:{executablePath:process.env.CHROMIUM_PATH||'/usr/bin/chromium',args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']},screenshot:'only-on-failure',trace:'retain-on-failure'},webServer:{command:'node tests/start-e2e.js',url:'http://127.0.0.1:4173/api/health',reuseExistingServer:false,timeout:30000}});

@@ -19,8 +19,10 @@ This version hosts the site and files in Cloudflare. It does **not** need Google
 | Worker name | `bnts-print-studio` |
 | Production branch | `main` |
 | Root directory | Repository root |
-| Build command | `npm run build` |
+| Build command | Leave blank — Wrangler runs the build configured in `wrangler.jsonc` |
 | Deploy command | `npx wrangler deploy` |
+
+The repository configures `npm run build` as a Wrangler build step, so the default `npx wrangler deploy` command creates `dist` before uploading assets. No committed build folder is needed.
 
 4. Deploy as a **Worker with static assets**, not a Pages-only/static-site deployment. The included `wrangler.jsonc` points to the correct frontend and backend.
 5. Current Wrangler automatically creates/binds a private **R2 bucket** (`PRINTS`) and **D1 database** (`DB`). The build dashboard may ask you to approve creating these resources. No bucket/database IDs need to be pasted into the repository.
@@ -86,3 +88,7 @@ For local development, copy `.dev.vars.example` to `.dev.vars`, set the local pa
 The design uses the Workers Free plan and the included R2/D1 allowances. The app reserves space before accepting an upload and stops when its **8 GB** cap is reached. Pending uploads, thumbnail allowance and completed files all count. It also limits upload creation and home lookups to reduce abuse. This is not a Cloudflare account-wide spending cap: other resources, request usage and policy changes can still create costs. Review Cloudflare's billing/usage page and alerts. R2 is not an unlimited free disk.
 
 Local tests cover the Worker, R2/D1 storage, 50 MB size limit and browser flow. A live deployment still needs the checks in step 5; this repository does not by itself authorise or publish anything in your Cloudflare account.
+
+## If a previous build failed with a missing `dist` folder
+
+Retry deployment using the latest `main` commit. The Wrangler configuration now builds the frontend automatically. Keep the deploy command as `npx wrangler deploy`. If you choose to keep a separate build command in the dashboard, `npm run build` also works, but it is no longer required.

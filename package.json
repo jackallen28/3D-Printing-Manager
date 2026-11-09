@@ -15,9 +15,9 @@
     "test:e2e": "npm run build:apps-script && npm run build:cloudflare && playwright test",
     "build:apps-script": "tsc --noEmit && vite build --config vite.apps-script.config.ts && node scripts/build-apps-script.js",
     "package:apps-script": "npm run build:apps-script && node scripts/package-apps-script.js",
-    "dev:cloudflare": "npm run build && wrangler dev",
-    "build:cloudflare": "npm run build && wrangler deploy --dry-run --outdir .cloudflare-build",
-    "deploy": "npm run build && wrangler deploy",
+    "dev:cloudflare": "wrangler dev",
+    "build:cloudflare": "wrangler deploy --dry-run --outdir .cloudflare-build",
+    "deploy": "wrangler deploy",
     "test:cloudflare": "npm run build:cloudflare && node --test tests/cloudflare.test.js"
   },
   "dependencies": {

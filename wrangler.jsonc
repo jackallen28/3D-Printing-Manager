@@ -13,5 +13,9 @@
   "r2_buckets": [{ "binding": "PRINTS" }],
   "d1_databases": [{ "binding": "DB" }],
   "triggers": { "crons": ["*/10 * * * *"] },
+  "build": {
+    "command": "npm run build",
+    "watch_dir": ["client", "shared", "index.html", "vite.config.ts", "tsconfig.json"]
+  },
   "observability": { "enabled": false }
 }

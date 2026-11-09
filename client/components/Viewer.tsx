@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RotateCcw, Box, ScanLine, Move } from 'lucide-react';
+import { Home, Box, ScanLine, Move } from 'lucide-react';
 import { addGlitterShader } from '../lib/glitter';
 import type { LoadedModel } from '../lib/model';
 import type { Analysis } from '../types';
@@ -75,6 +75,6 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
     <div className="viewer-canvas" ref={container}/>
     <div className="viewer-label"><span className="live-dot"/> INTERACTIVE 3D PREVIEW</div>
     {error&&<div className="viewer-error" role="alert">{error}</div>}
-    <div className="viewer-bottom"><span><Move size={13}/> Grid: 10 mm · Drag to rotate · scroll to zoom</span><div className="viewer-tools"><button type="button" onClick={()=>runtime.current?.reset()} title="Reset view" aria-label="Reset view"><RotateCcw size={17}/></button><button type="button" onClick={()=>setWireframe(!wireframe)} aria-pressed={wireframe} title="Wireframe" aria-label="Toggle wireframe"><Box size={17}/></button>{!!analysis?.floating&&<button type="button" onClick={()=>setHighlight(!highlight)} aria-pressed={highlight} title="Highlight floating parts" aria-label="Highlight floating parts"><ScanLine size={17}/></button>}</div></div>
+    <div className="viewer-bottom"><span><Move size={13}/> Grid: 10 mm · Drag to rotate · scroll to zoom</span><div className="viewer-tools"><button type="button" className="viewer-home" onClick={()=>runtime.current?.reset()} title="Return to the starting view" aria-label="Home view"><Home size={15}/> Home view</button><button type="button" onClick={()=>setWireframe(!wireframe)} aria-pressed={wireframe} title="Wireframe" aria-label="Toggle wireframe"><Box size={17}/></button>{!!analysis?.floating&&<button type="button" onClick={()=>setHighlight(!highlight)} aria-pressed={highlight} title="Highlight floating parts" aria-label="Highlight floating parts"><ScanLine size={17}/></button>}</div></div>
   </div>;
 });

@@ -35,21 +35,26 @@ import {
   cleanup,
   deleteRows,
   lookupName,
-  STORAGE_LIMIT,
+  storageLimit,
   PREVIEW_LIMIT,
 } from "./storage.js";
 const bootstraps = new WeakMap();
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[1-8][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 const encoder = new TextEncoder();
-// Upload limits sized for school networks, where a whole class shares one public address.
-// A class of 30 sending a few files each stays well inside these; a flood does not.
+// Upload limits sized for school networks, where a whole year level shares one public address.
+// 100 students sending one to three files each at once stay well inside these; a flood does not.
 export const UPLOAD_LIMITS = {
-  networkFilesPerHour: 150,
-  networkMbPerHour: 3000,
-  networkPending: 20,
-  globalFilesPerHour: 400,
+  networkFilesPerHour: 400,
+  networkMbPerHour: 5000,
+  // Unfinished uploads hold storage. Capping their total size per network stops one place
+  // reserving the whole store, while still letting 100 students send at the same time.
+  networkPending: 150,
+  networkPendingMb: 4000,
+  globalFilesPerHour: 1000,
   globalMbPerDay: 6000,
 };
+// The daily budget grows with the storage limit, so raising STORAGE_LIMIT_GB raises both.
+const globalMbPerDay = (env) => Math.max(UPLOAD_LIMITS.globalMbPerDay, Math.round((storageLimit(env) / 1e6) * 0.75));
 const turnstile = (env) => ({
   siteKey: String(env.TURNSTILE_SITE_KEY || ""),
   secret: String(env.TURNSTILE_SECRET_KEY || ""),
@@ -156,7 +161,7 @@ async function humanCheck(request, env) {
   sameOrigin(request);
   const config = turnstile(env);
   if (!config.enabled) failure("That page could not be found.", 404);
-  await rateLimit(env, "human:" + (await clientKey(env, request)), 30, 600);
+  await rateLimit(env, "human:" + (await clientKey(env, request)), 600, 600);
   const body = await readJson(request, 4000);
   if (typeof body.token !== "string" || !body.token || body.token.length > 2048)
     failure("Please complete the robot check again.", 400);
@@ -219,17 +224,17 @@ async function initUpload(request, env) {
     });
     const studioBusy = "The print studio is very busy right now. Try again later.";
     await rateLimit(env, "uploads:global", UPLOAD_LIMITS.globalFilesPerHour, 3600, { message: studioBusy });
-    await rateLimit(env, "upload-mb:global", UPLOAD_LIMITS.globalMbPerDay, 86400, {
+    await rateLimit(env, "upload-mb:global", globalMbPerDay(env), 86400, {
       amount: megabytes,
       message: studioBusy,
     });
-    // Reserved-but-unsent uploads hold storage, so cap how many one network can hold at once.
+    // Reserved-but-unsent uploads hold storage, so cap how many, and how much, one network holds at once.
     const pending = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM submissions WHERE source=? AND state='pending' AND pending_until>?",
+      "SELECT COUNT(*) AS n, COALESCE(SUM(reserved_bytes),0) AS bytes FROM submissions WHERE source=? AND state='pending' AND pending_until>?",
     )
       .bind(network, Date.now())
       .first();
-    if (pending.n >= UPLOAD_LIMITS.networkPending)
+    if (pending.n >= UPLOAD_LIMITS.networkPending || pending.bytes + body.bytes > UPLOAD_LIMITS.networkPendingMb * 1e6)
       failure("Too many uploads are in progress from your network. Wait for them to finish, then try again.", 429);
     const record = makeRecord(details, body.name, body.bytes);
     await reserve(env, record, body.previewBytes, network);
@@ -254,7 +259,8 @@ async function uploadPart(request, env, id, kind) {
   if (!row || row.state !== "pending" || row.pending_until <= now) failure("This upload is no longer available.", 410);
   if (row[kind + "_done"]) return json({ ok: true });
   const size = row[kind + "_bytes"],
-    claimed = now + 10 * 60 * 1000;
+    // A 50 MB file over a busy school connection can take a while, so each part may take up to 30 minutes.
+    claimed = now + 30 * 60 * 1000;
   if (Number(request.headers.get("Content-Length")) !== size)
     failure("The file size does not match the upload request.", 400);
   const lease = await env.DB.prepare(
@@ -343,8 +349,9 @@ async function streamObject(env, row, kind, student = false) {
 }
 async function studentLookup(request, env) {
   sameOrigin(request);
-  await rateLimit(env, "lookup:" + (await clientKey(env, request)), 10, 60);
-  await rateLimit(env, "lookup:global", 300, 60);
+  // A whole class may check their files together from one school network.
+  await rateLimit(env, "lookup:" + (await clientKey(env, request)), 120, 60);
+  await rateLimit(env, "lookup:global", 600, 60);
   const body = await readJson(request, 1000);
   if (
     !UUID.test(body.schoolId || "") ||
@@ -453,11 +460,17 @@ async function admin(request, env, path, identity) {
   }
   if (path === "/api/admin/submissions" && method === "GET") {
     const { results: rows } = await env.DB.prepare(
-      "SELECT data FROM submissions WHERE state='ready' AND expires_at>? ORDER BY created_at DESC LIMIT 1000",
+      "SELECT data FROM submissions WHERE state='ready' AND expires_at>? ORDER BY created_at DESC LIMIT 5001",
     )
       .bind(Date.now())
       .all();
-    return json({ records: rows.map(publicRecord) });
+    // 100 students a day for 14 days is about 2,000 requests; 5,000 leaves plenty of room.
+    // Each row is already stored as JSON, so join the text rather than parsing and re-encoding it:
+    // about 13 times less CPU, which keeps a large queue inside the Workers free plan's 10 ms limit.
+    const records = rows.slice(0, 5000).map((row) => row.data);
+    return new Response(`{"records":[${records.join(",")}],"truncated":${rows.length > 5000}}`, {
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
   }
   if (path === "/api/admin/cleanup" && method === "POST") return json(await cleanup(env));
   if (path === "/api/admin/submissions/bulk-status" && method === "POST") {
@@ -513,7 +526,7 @@ async function dispatch(request, env) {
   if (path === "/api/config" && method === "GET") return json(await publicConfig(env));
   if (path === "/api/classes/resolve" && method === "POST") {
     sameOrigin(request);
-    await rateLimit(env, "class:" + (await clientKey(env, request)), 120, 60);
+    await rateLimit(env, "class:" + (await clientKey(env, request)), 600, 60);
     const body = await readJson(request, 1000),
       s = await settings(env),
       result = resolveClass(s, body.schoolId, body.classCode);
@@ -570,6 +583,8 @@ export default {
                 : error.status
                   ? error.message
                   : "Storage is unavailable. Ask your teacher to check Cloudflare storage, then try again.",
+            // Unexpected errors are usually brief (a busy moment or a network hiccup), so the page may retry.
+            ...(error.status || error instanceof z.ZodError ? {} : { retry: true }),
           },
           status,
         ),

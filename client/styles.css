@@ -1699,6 +1699,10 @@ input[type="range"] {
   font-size: var(--text-xs);
   color: var(--text-subtle);
 }
+.show-more {
+  display: flex;
+  margin-inline: auto;
+}
 .status-badge {
   display: inline-block;
   padding: 2px var(--s2);

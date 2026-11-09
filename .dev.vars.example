@@ -9,3 +9,6 @@ TEACHER_PASSWORD=
 # Optional: Turnstile robot check on uploads. These are Cloudflare's always-pass test keys.
 # TURNSTILE_SITE_KEY=1x00000000000000000000AA
 # TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+
+# Optional: raise the 8 GB storage cap for busy schools (R2's first 10 GB is free).
+# STORAGE_LIMIT_GB=30

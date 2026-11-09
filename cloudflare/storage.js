@@ -2,6 +2,14 @@ import { DEFAULT_SETTINGS } from "../shared/catalog.js";
 import { safePart } from "../server/domain.js";
 import { AUDIT_RETENTION_MS } from "./auth.js";
 export const STORAGE_LIMIT = 8_000_000_000;
+/**
+ * The storage cap. 8 GB by default, which stays inside R2's free 10 GB. Set STORAGE_LIMIT_GB to
+ * raise it for busy schools (R2 charges a few cents a month for each GB over the free amount).
+ */
+export function storageLimit(env) {
+  const gb = Number(env?.STORAGE_LIMIT_GB);
+  return Number.isFinite(gb) && gb >= 1 && gb <= 1000 ? Math.round(gb * 1e9) : STORAGE_LIMIT;
+}
 export const PREVIEW_LIMIT = 512 * 1024;
 export const PENDING_MS = 60 * 60 * 1000;
 export async function settings(env) {
@@ -39,7 +47,7 @@ export async function usage(env) {
   const row = await env.DB.prepare(
     "SELECT COALESCE(SUM(reserved_bytes),0) AS bytes, COUNT(*) AS files FROM submissions",
   ).first();
-  return { usedBytes: row.bytes, limitBytes: STORAGE_LIMIT, files: row.files };
+  return { usedBytes: row.bytes, limitBytes: storageLimit(env), files: row.files };
 }
 export const lookupName = (text) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 export async function reserve(env, record, previewBytes, source = "") {
@@ -69,7 +77,7 @@ export async function reserve(env, record, previewBytes, source = "") {
       now + PENDING_MS,
       source,
       reserved,
-      STORAGE_LIMIT,
+      storageLimit(env),
     )
     .run();
 }

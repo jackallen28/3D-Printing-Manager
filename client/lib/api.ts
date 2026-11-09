@@ -39,21 +39,48 @@ async function gasRequest(path: string, options: RequestInit = {}, payload?: unk
 export function setCsrf(value: string) {
   csrf = value;
 }
+/** An error worth trying again after a short wait: a dropped connection or a brief server hiccup. */
+const retryable = (message: string) => Object.assign(new Error(message), { retryable: true });
+const isRetryable = (error: unknown) => !!(error as { retryable?: boolean })?.retryable;
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Runs a step that is safe to repeat, retrying brief failures with growing waits. The random extra
+ * wait stops a whole class retrying at the same moment. Limits and other clear answers are not retried.
+ */
+async function retrying<T>(task: () => Promise<T>): Promise<T> {
+  const delays = [1500, 4000, 9000];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      if (!isRetryable(error) || attempt >= delays.length) throw error;
+      await wait(delays[attempt] + Math.random() * 1500);
+    }
+  }
+}
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   if (isAppsScript) return gasRequest(path, options);
   const headers = new Headers(options.headers);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (csrf) headers.set("X-CSRF-Token", csrf);
-  const response = await fetch("/api" + path, { ...options, headers });
+  let response: Response;
+  try {
+    response = await fetch("/api" + path, { ...options, headers });
+  } catch {
+    throw retryable("The server could not be reached. Check your internet connection and try again.");
+  }
   let result;
   try {
     result = await response.json();
   } catch {
+    // A gateway page instead of JSON usually means a brief problem between here and the server.
+    if (response.status >= 500) throw retryable("The print studio is busy. Please try again.");
     throw new Error("The server could not be reached. Please try again.");
   }
   if (!response.ok) {
     if (response.status === 401 && path !== "/admin/login") window.dispatchEvent(new Event("teacher-session-expired"));
-    throw new Error(result.error || "Something went wrong. Please try again.");
+    const message = result.error || "Something went wrong. Please try again.";
+    throw result.retry ? retryable(message) : new Error(message);
   }
   return result;
 }
@@ -137,16 +164,19 @@ function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
 async function cloudflareUpload(form: FormData, onProgress: (value: number) => void) {
   const model = form.get("model") as File,
     preview = form.get("preview") as File;
-  const pending = await api("/uploads/init", {
-    method: "POST",
-    headers: humanToken ? { "X-Human-Token": humanToken } : undefined,
-    body: JSON.stringify({
-      details: JSON.parse(String(form.get("details"))),
-      name: model.name,
-      bytes: model.size,
-      previewBytes: preview.size,
+  // Each step is safe to repeat: the server recognises the same request and file.
+  const pending = await retrying(() =>
+    api("/uploads/init", {
+      method: "POST",
+      headers: humanToken ? { "X-Human-Token": humanToken } : undefined,
+      body: JSON.stringify({
+        details: JSON.parse(String(form.get("details"))),
+        name: model.name,
+        bytes: model.size,
+        previewBytes: preview.size,
+      }),
     }),
-  });
+  );
   if (pending.receipt) return pending.receipt;
   const total = model.size + preview.size;
   async function part(kind: "model" | "preview", file: File, done: boolean) {
@@ -156,7 +186,8 @@ async function cloudflareUpload(form: FormData, onProgress: (value: number) => v
       xhr.open("PUT", `/api/uploads/${pending.id}/${kind}`);
       xhr.setRequestHeader("Authorization", "Bearer " + pending.token);
       xhr.setRequestHeader("Content-Type", kind === "preview" ? "image/png" : "application/octet-stream");
-      xhr.timeout = 600000;
+      // Many students sharing one school connection can make a large file slow to send.
+      xhr.timeout = 30 * 60 * 1000;
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable)
           onProgress(Math.min(99, Math.round((((kind === "preview" ? model.size : 0) + event.loaded) / total) * 100)));
@@ -166,23 +197,33 @@ async function cloudflareUpload(form: FormData, onProgress: (value: number) => v
           resolve();
           return;
         }
+        let body: { error?: string; retry?: boolean } = {};
         try {
-          reject(new Error(JSON.parse(xhr.responseText).error || "The upload failed. Please try again."));
+          body = JSON.parse(xhr.responseText);
         } catch {
-          reject(new Error("The upload could not be confirmed. Please try again."));
+          // Not JSON: usually a gateway page during a brief server problem.
         }
+        const message = body.error || "The upload failed. Please try again.";
+        // 409: an earlier attempt that dropped is still being tidied up on the server.
+        reject(
+          body.retry || xhr.status === 409 || (xhr.status >= 502 && !body.error)
+            ? retryable(message)
+            : new Error(message),
+        );
       };
-      xhr.onerror = () => reject(new Error("Connection lost. Retry to continue the same submission."));
-      xhr.ontimeout = () => reject(new Error("The upload timed out. Retry to continue the same submission."));
+      xhr.onerror = () => reject(retryable("Connection lost. Select Send for printing again to carry on."));
+      xhr.ontimeout = () => reject(retryable("The upload took too long. Select Send for printing again to carry on."));
       xhr.send(file);
     });
   }
-  await part("model", model, pending.modelDone);
-  await part("preview", preview, pending.previewDone);
-  const result = await api(`/uploads/${pending.id}/complete`, {
-    method: "POST",
-    headers: { Authorization: "Bearer " + pending.token },
-  });
+  await retrying(() => part("model", model, pending.modelDone));
+  await retrying(() => part("preview", preview, pending.previewDone));
+  const result = await retrying(() =>
+    api(`/uploads/${pending.id}/complete`, {
+      method: "POST",
+      headers: { Authorization: "Bearer " + pending.token },
+    }),
+  );
   onProgress(100);
   return result;
 }

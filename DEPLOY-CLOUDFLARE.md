@@ -76,7 +76,7 @@ The site is public, so expect automated sign-in attempts and spam uploads. These
 | Wrong-password lockout | 5 wrong passwords from one network blocks sign-in from that network for 15 minutes. 200 wrong passwords an hour across the whole site blocks all sign-ins for the rest of that hour. Correct sign-ins never count. Each wrong attempt also waits 0.4 seconds. |
 | Sessions | Signed, HttpOnly, `__Host-` cookies that last 8 hours, with a CSRF token on every change. **Settings → Security → Sign out everywhere** ends every session at once. Changing `TEACHER_PASSWORD` does the same. |
 | Activity log | **Settings → Security** lists sign-ins, wrong passwords, deletions, setting changes and upload pauses for 30 days. Each row shows a short network code, so you can tell whether attempts come from one place or many. Raw IP addresses and student names are never stored in it. |
-| Upload limits | Each network: 150 files and 3 GB an hour, and 20 unfinished uploads at once. Whole site: 400 files an hour and 6 GB a day. A whole class sharing a school's internet connection stays well inside these. IPv6 addresses are grouped by /64, so one connection can't dodge the limits by changing address. Retrying or resuming an upload never counts twice. |
+| Upload limits | Each network: 400 files and 5 GB an hour, with up to 150 unfinished uploads (4 GB) at once. Whole site: 1,000 files an hour and 6 GB a day (more if you raise the storage limit). 100 students on one school internet connection sending at the same time stay inside these; see [Large classes](#7-large-classes). IPv6 addresses are grouped by /64, so one connection can't dodge the limits by changing address. Retrying or resuming an upload never counts twice. |
 | Pause uploads | **Settings → Uploads → Pause uploads** stops new uploads straight away, with no save needed. Students see a clear message. |
 | Class code required | **Settings → Classes → Students must enter a class code to upload**. Only people with a code from a teacher can send files. Every school needs at least one class. |
 | Bulk delete | Select requests in the queue and choose **Delete** to remove spam and its files together. |
@@ -115,6 +115,33 @@ If the site uses a custom domain on a Cloudflare zone, **Security → WAF → Ra
 3. In the queue, search for the spam, select it and choose **Delete**.
 4. Check **Settings → Security → Recent activity** to see what happened and from how many networks.
 5. Turn on Cloudflare Access and Turnstile if they aren't already on, then resume uploads.
+
+## 7. Large classes
+
+The site is built and tested for **100 students on the same school network uploading at the same time**. An automated test runs this in the Workers runtime: 100 students send 150 files at once (a quarter send a ZIP of three), every upload succeeds, the teacher queue shows all 150, and then all 100 students open **Find your uploads** together without being blocked.
+
+What makes this work:
+
+- **Limits sized for one shared address.** A school sends everyone through one public IP address, so per-network limits leave room for a full year level (see the table above). Sign-in limits only count wrong passwords, so teachers are never affected.
+- **Automatic retries.** If a request fails briefly at a busy moment (a dropped connection or a short server error), the page waits a few seconds and tries again, up to three times, with a random delay so a whole class doesn't retry at once. Every step is safe to repeat. Limits are never retried.
+- **Time for slow connections.** Each file may take up to 30 minutes to send, enough for 50 MB files while 100 students share the school's connection.
+- **A queue that scales.** The teacher console loads up to 5,000 requests and shows them 120 at a time, with **Show more**. The list is built without re-encoding each record, which keeps it inside the Workers free plan's 10 ms CPU limit per request.
+
+### Cloudflare free plan
+
+One student sending one file uses about 8 Worker requests (settings, class check, start, file, preview, finish, lookup, thumbnail). 100 students use about 1,000 of the free plan's 100,000 requests a day. The page itself is served as static files, which don't count.
+
+### Plan your storage
+
+Files stay for 14 days, so storage builds up. A typical school model is 1 to 15 MB. If 100 students send about 10 MB each every school day, you'll hold about 10 GB at once, more than the default 8 GB limit. When storage is full, new uploads stop until older files expire or are deleted, and teachers see a warning in the queue from 80% full.
+
+To raise the limit, add a variable `STORAGE_LIMIT_GB` (for example `30`) in the Worker's **Variables and Secrets**. The first 10 GB of R2 storage is free; beyond that R2 charges about US$0.015 per GB a month, so 30 GB costs about US$0.30 a month. Check current [R2 pricing](https://developers.cloudflare.com/r2/pricing/). The site-wide daily data limit rises with it. You can also delete printed requests you no longer need.
+
+### Before a big session
+
+- Turn on **Students must enter a class code to upload**, so only your students can send files while the site is busy.
+- Check **Settings → Storage** has room for the session.
+- If the school's internet is slow, ask half the class to send first. Uploads still succeed when everyone sends together; they just take longer.
 
 ## Updates
 

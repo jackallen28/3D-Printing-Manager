@@ -160,7 +160,6 @@ export async function clientKey(env, request) {
   const network = networkOf(request.headers.get("CF-Connecting-IP"));
   return b64(new Uint8Array(await crypto.subtle.sign("HMAC", await salt, encoder.encode(network)))).slice(0, 22);
 }
-const windowKey = (key, windowSeconds) => key + ":" + Math.floor(Date.now() / 1000 / windowSeconds);
 /** Adds `amount` to a fixed-window counter and rejects the request once it goes over `limit`. */
 export async function rateLimit(env, key, limit, windowSeconds, { amount = 1, message } = {}) {
   const window = Math.floor(Date.now() / 1000 / windowSeconds);
@@ -171,37 +170,42 @@ export async function rateLimit(env, key, limit, windowSeconds, { amount = 1, me
     .first();
   if (value.count > limit) failure(message || "Too many requests. Please wait before trying again.", 429);
 }
-/** Reads a counter without changing it. */
-export async function counted(env, key, windowSeconds) {
-  const row = await env.DB.prepare("SELECT count FROM rate_limits WHERE key=?")
-    .bind(windowKey(key, windowSeconds))
-    .first();
-  return row?.count || 0;
-}
-
 // Failed sign-ins ---------------------------------------------------------------
 // Only failures count, so a teacher who signs in correctly is never slowed down.
 // With a 12+ character password, 200 guesses an hour site-wide makes guessing hopeless.
-export const LOGIN_LIMITS = { perNetwork: 5, networkWindow: 15 * 60, global: 200, globalWindow: 60 * 60 };
+// Failures are kept in one-minute buckets and the last 15 (or 60) are added up. Unlike fixed
+// 15-minute blocks, there is no boundary an attacker can straddle to get extra guesses.
+export const LOGIN_LIMITS = { perNetwork: 5, networkMinutes: 15, global: 200, globalMinutes: 60 };
 const LOCKED = "Too many incorrect passwords. Wait 15 minutes, then try again.";
+const minuteNow = () => Math.floor(Date.now() / 60000);
+async function recentFailures(env, key, minutes) {
+  const now = minuteNow();
+  const keys = Array.from({ length: minutes }, (_, i) => `${key}:m${now - i}`);
+  const row = await env.DB.prepare(
+    `SELECT COALESCE(SUM(count),0) AS n FROM rate_limits WHERE key IN (${keys.map(() => "?").join(",")})`,
+  )
+    .bind(...keys)
+    .first();
+  return row.n;
+}
 export async function checkLoginAllowed(env, network) {
   const [mine, everyone] = await Promise.all([
-    counted(env, "login-fail:" + network, LOGIN_LIMITS.networkWindow),
-    counted(env, "login-fail:global", LOGIN_LIMITS.globalWindow),
+    recentFailures(env, "login-fail:" + network, LOGIN_LIMITS.networkMinutes),
+    recentFailures(env, "login-fail:global", LOGIN_LIMITS.globalMinutes),
   ]);
   if (mine >= LOGIN_LIMITS.perNetwork || everyone >= LOGIN_LIMITS.global) failure(LOCKED, 429);
 }
 export async function recordLoginFailure(env, network) {
+  const now = minuteNow();
   await env.DB.batch(
     [
-      ["login-fail:" + network, LOGIN_LIMITS.networkWindow],
-      ["login-fail:global", LOGIN_LIMITS.globalWindow],
-    ].map(([name, seconds]) => {
-      const window = Math.floor(Date.now() / 1000 / seconds);
-      return env.DB.prepare(
+      ["login-fail:" + network, LOGIN_LIMITS.networkMinutes],
+      ["login-fail:global", LOGIN_LIMITS.globalMinutes],
+    ].map(([name, minutes]) =>
+      env.DB.prepare(
         "INSERT INTO rate_limits(key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1",
-      ).bind(name + ":" + window, (window + 1) * seconds * 1000);
-    }),
+      ).bind(`${name}:m${now}`, (now + minutes + 1) * 60000),
+    ),
   );
   // A short pause slows scripted guessing without bothering a person who mistyped.
   await sleep(400);

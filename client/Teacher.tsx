@@ -42,6 +42,7 @@ interface AdminState {
     activity: { at: string; event: string; detail: string; source: string }[];
   };
 }
+const PAGE_SIZE = 120;
 const STATUSES = [
   { id: "queued", label: "Queued" },
   { id: "printing", label: "Printing" },
@@ -66,7 +67,10 @@ export default function Teacher() {
     [status, setStatus] = useState("all"),
     [colour, setColour] = useState("all");
   const [pausing, setPausing] = useState(false),
-    [confirmDelete, setConfirmDelete] = useState(false);
+    [confirmDelete, setConfirmDelete] = useState(false),
+    // A busy fortnight can mean thousands of requests, so show them a page at a time.
+    [shown, setShown] = useState(PAGE_SIZE),
+    [truncated, setTruncated] = useState(false);
   const [checkedIds, setCheckedIds] = useState<string[]>([]),
     [bulkStatus, setBulkStatus] = useState("printed"),
     [bulkMessage, setBulkMessage] = useState("");
@@ -75,7 +79,8 @@ export default function Teacher() {
   useEffect(() => {
     setCheckedIds([]);
     setBulkMessage("");
-  }, [school, group, search, status, colour]);
+    setShown(PAGE_SIZE);
+  }, [school, group, search, status, colour, sort]);
   useEffect(() => {
     if (!checkedIds.length) setConfirmDelete(false);
   }, [checkedIds.length]);
@@ -104,10 +109,11 @@ export default function Teacher() {
     try {
       const [settings, submissions] = await Promise.all([
         api<AdminState>("/admin/settings"),
-        api<{ records: PrintRecord[] }>("/admin/submissions"),
+        api<{ records: PrintRecord[]; truncated?: boolean }>("/admin/submissions"),
       ]);
       setAdmin(settings);
       setRecords(submissions.records);
+      setTruncated(!!submissions.truncated);
       if (
         (settings.platform !== "cloudflare" && !settings.settings.folderId) ||
         !settings.connected ||
@@ -396,6 +402,15 @@ export default function Teacher() {
           </button>
         </div>
       )}
+      {tab === "queue" && admin?.storage && admin.storage.usedBytes >= admin.storage.limitBytes * 0.8 && (
+        <p className="notice" role="status">
+          Storage is {Math.min(100, Math.round((admin.storage.usedBytes / admin.storage.limitBytes) * 100))}% full. New
+          uploads stop when it’s full. Delete printed requests you no longer need.
+        </p>
+      )}
+      {tab === "queue" && truncated && (
+        <p className="notice">Showing the newest 5,000 requests. Delete older ones to see the rest.</p>
+      )}
       {tab === "queue" && bulkMessage && (
         <p role="status" className="hint">
           {bulkMessage}
@@ -569,7 +584,7 @@ export default function Teacher() {
           )}
           {filtered.length ? (
             <ul className="file-grid">
-              {filtered.map((r) => (
+              {filtered.slice(0, shown).map((r) => (
                 <li className="print-card" key={r.id}>
                   <input
                     type="checkbox"
@@ -613,6 +628,11 @@ export default function Teacher() {
                 Clear filters
               </button>
             </div>
+          )}
+          {filtered.length > shown && (
+            <button className="button secondary show-more" onClick={() => setShown((n) => n + PAGE_SIZE)}>
+              Show more ({(filtered.length - shown).toLocaleString()} more)
+            </button>
           )}
           <p className="hint">Files are deleted 14 days after they’re sent. Download anything you need to keep.</p>
         </>
@@ -1430,8 +1450,9 @@ function Setup({
             <div>
               <dt>Upload limits</dt>
               <dd>
-                Each network: 150 files and 3 GB an hour, 20 in progress at once. Whole site: 400 files an hour and 6 GB
-                a day.
+                Each network: 400 files and 5 GB an hour, with up to 4 GB of unfinished uploads at once. Whole site:
+                1,000 files an hour and 6 GB a day. That’s room for 100 students on one school network sending at the
+                same time.
               </dd>
             </div>
             <div>
@@ -1591,7 +1612,15 @@ function Thumbnail({ record }: { record: PrintRecord }) {
     };
   }, [record.id]);
   return src ? (
-    <img loading="lazy" src={src} alt={`3D preview of ${record.originalName}`} />
+    <img
+      loading="lazy"
+      src={src}
+      alt={`3D preview of ${record.originalName}`}
+      onError={() => {
+        setSrc("");
+        setFailed(true);
+      }}
+    />
   ) : failed ? (
     <FileBox size={28} strokeWidth={1.5} aria-label="No preview" />
   ) : (

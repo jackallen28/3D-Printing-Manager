@@ -467,6 +467,25 @@ test("only failed sign-ins count, a network is locked after five, and attempts a
   assert.ok(events.includes("sign_in"));
 });
 
+test("wrong passwords count for exactly the last 15 minutes, with no boundary to straddle", async (t) => {
+  const s = await setup(t);
+  const attempt = (password) => s.request("/admin/login", json({ password }, from("198.51.100.8")));
+  for (let i = 0; i < 5; i++) assert.equal((await attempt("wrong-password")).status, 401);
+  // Make those failures look older by moving their one-minute buckets back in time.
+  const age = async (minutes) => {
+    const { results } = await s.db.prepare("SELECT key FROM rate_limits WHERE key LIKE 'login-fail:%'").all();
+    for (const { key } of results)
+      await s.db
+        .prepare("UPDATE rate_limits SET key=? WHERE key=?")
+        .bind(key.replace(/:m\d+$/, ":m" + (Math.floor(Date.now() / 60000) - minutes)), key)
+        .run();
+  };
+  await age(14);
+  assert.equal((await attempt(PASSWORD)).status, 429, "14 minutes ago still counts");
+  await age(16);
+  assert.equal((await attempt(PASSWORD)).status, 200, "16 minutes ago no longer counts");
+});
+
 test("sign out everywhere ends every existing staff session", async (t) => {
   const s = await setup(t);
   const second = await s.request("/admin/login", json({ password: PASSWORD }));
@@ -522,13 +541,21 @@ test("a required class code blocks uploads without a valid code", async (t) => {
   assert.equal((await init(s, { details: { ...details(), classCode: "print4" } })).response.status, 200);
 });
 
-test("one network can hold at most 20 unfinished uploads; other networks are unaffected", async (t) => {
+test("one network can't reserve more than 4 GB of unfinished uploads; other networks are unaffected", async (t) => {
   const s = await setup(t);
-  for (let i = 0; i < 20; i++) assert.equal((await init(s, {}, from("198.51.100.50"))).response.status, 200);
-  const blocked = await init(s, {}, from("198.51.100.50"));
-  assert.equal(blocked.response.status, 429);
+  const big = { bytes: MAX_BYTES };
+  let accepted = 0,
+    blocked;
+  // Claiming 50 MB uploads without ever sending them is how storage would be hoarded.
+  for (let i = 0; i < 100 && !blocked; i++) {
+    const attempt = await init(s, big, from("198.51.100.50"));
+    if (attempt.response.status === 200) accepted++;
+    else blocked = attempt;
+  }
+  assert.equal(blocked?.response.status, 429);
   assert.match(blocked.body.error, /in progress/);
-  assert.equal((await init(s, {}, from("203.0.113.60"))).response.status, 200);
+  assert.equal(accepted, Math.floor(4000e6 / (MAX_BYTES + 512 * 1024 + 16 * 1024)));
+  assert.equal((await init(s, big, from("203.0.113.60"))).response.status, 200);
 });
 
 test("the site-wide daily data budget stops a flood, but resuming an existing upload still works", async (t) => {
@@ -653,4 +680,57 @@ test("with Turnstile set up, new uploads need a passed robot check", async (t) =
   assert.equal(verified, 2, "one passed check covers a batch of files");
   const elsewhere = await init(s, {}, { "X-Human-Token": token, "CF-Connecting-IP": "203.0.113.99" });
   assert.equal(elsewhere.response.status, 403, "a pass can't be reused from another network");
+});
+
+// Capacity ------------------------------------------------------------------------
+// A school sends a whole year level through one internet address, so 100 students
+// uploading and checking their files at once must all succeed.
+
+const nameFor = (i) => "Student " + String.fromCharCode(65 + Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26));
+async function sendAs(s, firstName, network) {
+  const p = await init(s, { details: { ...details(), firstName } }, network);
+  if (p.response.status !== 200) return { status: p.response.status, error: p.body.error };
+  for (const [kind, data] of [
+    ["model", p.model],
+    ["preview", png],
+  ]) {
+    const response = await sendPart(s, p.body, kind, data);
+    if (response.status !== 200) return { status: response.status, error: (await response.json()).error };
+  }
+  const done = await s.request(`/uploads/${p.body.id}/complete`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + p.body.token, Origin: "https://studio.test" },
+  });
+  return { status: done.status, error: done.status === 201 ? "" : (await done.json()).error };
+}
+
+test("100 students on one school network can upload at the same time, then all check their files", async (t) => {
+  const s = await setup(t);
+  const school = from("203.0.113.10");
+  const started = Date.now();
+  // Everyone starts together. A quarter send a ZIP of three files, which the page sends one after another.
+  const results = await Promise.all(
+    Array.from({ length: 100 }, async (_, i) => {
+      const outcomes = [];
+      for (let file = 0; file < (i % 4 === 0 ? 3 : 1); file++) outcomes.push(await sendAs(s, nameFor(i), school));
+      return outcomes;
+    }),
+  );
+  const failures = results.flat().filter((r) => r.status !== 201);
+  assert.deepEqual(failures, [], "every upload succeeds");
+  assert.equal(results.flat().length, 150);
+  const queue = await (await s.request("/admin/submissions", { headers: s.headers })).json();
+  assert.equal(queue.records.length, 150, "the teacher sees every file");
+  t.diagnostic(`150 uploads from 100 students on one network: ${Date.now() - started} ms in the local Workers runtime`);
+  // The same class then opens "Find your uploads" at once.
+  const lookups = await Promise.all(
+    Array.from({ length: 100 }, (_, i) =>
+      s.request("/student/lookup", json({ schoolId: details().schoolId, firstName: nameFor(i) }, school)),
+    ),
+  );
+  assert.deepEqual(
+    lookups.map((r) => r.status).filter((status) => status !== 200),
+    [],
+    "every lookup succeeds",
+  );
 });

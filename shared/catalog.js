@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS = {
   colours: ["jade-white", "black", "red", "yellow", "bambu-green", "blue", "purple", "orange"],
   customColourEnabled: true,
   extraFormats: [],
+  requireClassCode: false,
 };
 export const RETENTION_DAYS = 14;
 export const MAX_BYTES = 50 * 1024 * 1024;

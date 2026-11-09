@@ -15,6 +15,8 @@ const settingsFields = {
   colours: z.array(z.enum(BAMBU_COLOURS.map((c) => c.id))).max(50),
   customColourEnabled: z.boolean(),
   extraFormats: z.array(z.enum(OPTIONAL_FORMATS)).max(OPTIONAL_FORMATS.length).default([]),
+  // Only people with a class code from a teacher can upload. Stops outsiders sending files.
+  requireClassCode: z.boolean().default(false),
 };
 function checkSettings(s, ctx) {
   for (const key of ["schools", "staff", "classes"]) {
@@ -95,6 +97,8 @@ export function validateSubmission(data, settings) {
   const school = settings.schools.find((x) => x.id === value.schoolId);
   const staff = settings.staff.find((x) => x.id === value.staffId);
   const classroom = resolveClass(settings, value.schoolId, value.classCode);
+  if (settings.requireClassCode && !classroom.classId)
+    throw Object.assign(new Error("Enter the class code from your teacher."), { status: 400 });
   value.classId = classroom.classId;
   value.size = scaleLabel(value.scalePercent);
   if (!school || !staff)

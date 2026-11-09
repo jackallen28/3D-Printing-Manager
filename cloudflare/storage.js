@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS } from "../shared/catalog.js";
 import { safePart } from "../server/domain.js";
+import { AUDIT_RETENTION_MS } from "./auth.js";
 export const STORAGE_LIMIT = 8_000_000_000;
 export const PREVIEW_LIMIT = 512 * 1024;
 export const PENDING_MS = 60 * 60 * 1000;
@@ -41,14 +42,14 @@ export async function usage(env) {
   return { usedBytes: row.bytes, limitBytes: STORAGE_LIMIT, files: row.files };
 }
 export const lookupName = (text) => text.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-export async function reserve(env, record, previewBytes) {
+export async function reserve(env, record, previewBytes, source = "") {
   const key = keys(record),
     now = Date.now(),
     reserved = record.bytes + PREVIEW_LIMIT + 16 * 1024;
   return env.DB.prepare(
     `INSERT INTO submissions
-    (id,request_id,school_id,lookup_name,data,reserved_bytes,model_bytes,preview_bytes,model_key,preview_key,created_at,expires_at,pending_until)
-    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
+    (id,request_id,school_id,lookup_name,data,reserved_bytes,model_bytes,preview_bytes,model_key,preview_key,created_at,expires_at,pending_until,source)
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?
     WHERE (SELECT COALESCE(SUM(reserved_bytes),0) FROM submissions)+?<=?
     ON CONFLICT(request_id) DO NOTHING`,
   )
@@ -66,6 +67,7 @@ export async function reserve(env, record, previewBytes) {
       now,
       Date.parse(record.expiresAt),
       now + PENDING_MS,
+      source,
       reserved,
       STORAGE_LIMIT,
     )
@@ -103,6 +105,7 @@ export async function cleanup(env) {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM revoked_sessions WHERE expires_at<=?").bind(now),
       env.DB.prepare("DELETE FROM rate_limits WHERE expires_at<=?").bind(now),
+      env.DB.prepare("DELETE FROM audit_log WHERE at<=?").bind(now - AUDIT_RETENTION_MS),
     ]);
     await setMeta(env, "cleanup_last_success", new Date().toISOString());
     await setMeta(env, "cleanup_error", null);

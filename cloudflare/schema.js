@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   preview_lease INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  pending_until INTEGER NOT NULL
+  pending_until INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS submissions_lookup ON submissions(school_id,lookup_name,state,expires_at);
 CREATE INDEX IF NOT EXISTS submissions_expiry ON submissions(state, expires_at);
@@ -27,10 +28,17 @@ CREATE INDEX IF NOT EXISTS submissions_pending ON submissions(state, pending_unt
 CREATE TABLE IF NOT EXISTS revoked_sessions (id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS rate_limits_expiry ON rate_limits(expires_at);
+CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, event TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
 `;
 export async function initialiseDatabase(db) {
   const statements = SCHEMA.split(";")
     .map((sql) => sql.trim())
     .filter(Boolean);
   await db.batch(statements.map((sql) => db.prepare(sql)));
+  // Databases created before the network column existed get it added in place.
+  const { results: columns } = await db.prepare("PRAGMA table_info(submissions)").all();
+  if (!columns.some((column) => column.name === "source"))
+    await db.prepare("ALTER TABLE submissions ADD COLUMN source TEXT NOT NULL DEFAULT ''").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS submissions_source ON submissions(source, state, pending_until)").run();
 }

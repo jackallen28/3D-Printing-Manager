@@ -67,16 +67,17 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
     });
   });
   await page.goto("http://127.0.0.1:4174/teacher");
-  await page.getByLabel("Teacher password").fill("local-demo-teacher-password");
+  await page.getByLabel("Password").fill("local-demo-teacher-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("button", { name: "Setup & supplies" }).click();
+  await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("School for new class").selectOption({ label: "School A" });
   await page.getByLabel("New class name").fill("Design Studio");
   await page.getByLabel("New class code").fill("PRINT4");
   await page.getByRole("button", { name: "Add class", exact: true }).click();
   await expect(page.getByLabel("Class code for Design Studio")).toHaveValue("PRINT4");
-  await page.getByRole("button", { name: "Save setup" }).click();
-  await expect(page.getByText("Setup saved. Your student upload page uses these options.")).toBeVisible();
+  await expect(page.getByText("You have unsaved changes.")).toBeVisible();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Settings saved. The upload page now uses these options.")).toBeVisible();
   await page.goto("http://127.0.0.1:4174/");
   const archive = zipSync({
     "parts/colours.obj": strToU8(obj()),
@@ -88,7 +89,7 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({ name: "my-cad-files.zip", mimeType: "application/zip", buffer: Buffer.from(archive) });
-  await expect(page.getByText("Review file 1 of 3", { exact: false })).toBeVisible();
+  await expect(page.getByText("File 1 of 3", { exact: false })).toBeVisible();
   await expect(page.getByText("2 separate parts")).toBeVisible();
   await expect(page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Left/ })).toBeVisible();
   await page.getByRole("spinbutton", { name: "Scale (%)" }).fill("150");
@@ -96,10 +97,10 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
   await page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Left/ }).click();
   await page
     .getByRole("radiogroup", { name: "Available print colours" })
-    .getByRole("radio", { name: "Advanced filament — request only" })
+    .getByRole("radio", { name: "Special filament (on request)" })
     .check();
-  await page.getByLabel("Advanced filament request").fill("PLA-CF, please check printer compatibility.");
-  await page.getByRole("button", { name: "Add another colour" }).click();
+  await page.getByLabel("Which special filament do you need?").fill("PLA-CF, please check printer compatibility.");
+  await page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Right/ }).click();
   await expect(
     page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Right.*Jade White/ }),
   ).toBeVisible();
@@ -108,7 +109,7 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
     .getByRole("radio", { name: "Blue", exact: true })
     .check();
   await expect(
-    page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Left.*Advanced filament/ }),
+    page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Left.*Special filament/ }),
   ).toBeVisible();
   await expect(
     page.getByRole("group", { name: "Model parts" }).getByRole("button", { name: /Right.*Blue/ }),
@@ -122,9 +123,8 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
     "true",
   );
   await page.screenshot({ path: "test-results/obj-multicolour-glitter-scale.png", fullPage: true });
-  await page.getByText("I’ve checked my model and it’s ready for the printing team.").click();
-  await page.getByRole("button", { name: "Confirm and review next file" }).click();
-  await expect(page.getByText("Review file 2 of 3", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Next file" }).click();
+  await expect(page.getByText("File 2 of 3", { exact: false })).toBeVisible();
   await expect(page.getByText("2 separate parts")).toBeVisible();
   await page.getByRole("spinbutton", { name: "Scale (%)" }).fill("50");
   await expect(page.locator(".viewer-unit-label")).toHaveText("25.0 × 10.0 × 10.0 mm");
@@ -134,9 +134,9 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
     .click();
   await page
     .getByRole("radiogroup", { name: "Available print colours" })
-    .getByRole("radio", { name: "Advanced filament — request only" })
+    .getByRole("radio", { name: "Special filament (on request)" })
     .check();
-  await page.getByLabel("Advanced filament request").fill("Silk PLA purple");
+  await page.getByLabel("Which special filament do you need?").fill("Silk PLA purple");
   await page
     .getByRole("group", { name: "Model parts" })
     .getByRole("button", { name: /Part 2/ })
@@ -145,25 +145,23 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
     .getByRole("radiogroup", { name: "Available print colours" })
     .getByRole("radio", { name: "Blue", exact: true })
     .check();
-  await page.getByText("I’ve checked my model and it’s ready for the printing team.").click();
-  await page.getByRole("button", { name: "Confirm and review next file" }).click();
-  await expect(page.getByText("Review file 3 of 3", { exact: false })).toBeVisible();
-  await expect(page.getByText("No common issues found")).toBeVisible();
-  await page.getByText("I’ve checked my model and it’s ready for the printing team.").click();
-  await page.getByRole("button", { name: "Confirm my model" }).click();
+  await page.getByText("I’ve read the model check", { exact: false }).click();
+  await page.getByRole("button", { name: "Next file" }).click();
+  await expect(page.getByText("File 3 of 3", { exact: false })).toBeVisible();
+  await expect(page.getByText("No problems found")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("First name").fill("Casey");
   await page.getByLabel("School", { exact: false }).first().selectOption({ label: "School A" });
-  await page.getByLabel("BNTS staff member").selectOption({ label: "Alex" });
+  await page.getByLabel("BNTS teacher").selectOption({ label: "Alex" });
   await page.getByLabel("Class code").fill("wrong");
-  await page.getByRole("button", { name: "Review my request" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("alert")).toContainText("Class code not found");
   await page.getByLabel("Class code").fill(" print4 ");
-  await page.getByRole("button", { name: "Review my request" }).click();
-  await expect(page.getByText("3 CAD files", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("3 files", { exact: true })).toBeVisible();
   await expect(page.getByText("Design Studio", { exact: true })).toBeVisible();
-  await page.getByText("Everything looks right. Send my file to the printing team.").click();
-  await page.getByRole("button", { name: "Submit for printing" }).click();
-  await expect(page.getByRole("heading", { name: "File submitted." })).toBeVisible();
+  await page.getByRole("button", { name: "Send for printing" }).click();
+  await expect(page.getByRole("heading", { name: /been sent/ })).toBeVisible();
   const records = (
     await page.request.get("http://127.0.0.1:4174/api/admin/submissions").then((r) => r.json())
   ).records.filter((r) => r.firstName === "Casey");
@@ -175,16 +173,15 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
   for (const record of records)
     expect(record.filename).toMatch(/^School-A_(WHITE|ADVANCED_BLUE)_\d{4}-\d\d-\d\d_Casey\.(obj|stl)$/);
   await page.goto("http://127.0.0.1:4174/teacher");
-  await page.getByRole("button", { name: /School A.*Open school/ }).click();
-  await page.getByRole("button", { name: /Design Studio.*View designs/ }).click();
+  await page.getByRole("combobox", { name: "Class", exact: true }).selectOption({ label: "Design Studio" });
   await page.getByLabel("Select all files").check();
   const toolbar = page.locator(".bulk-actions");
   await toolbar.getByRole("combobox", { name: "Bulk print status" }).selectOption("printing");
-  await page.getByRole("button", { name: "Update selected" }).click();
+  await page.getByRole("button", { name: "Update status" }).click();
   await expect(page.getByRole("status")).toContainText("Updated 3 files.");
   await page.getByLabel("Select all files").check();
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Export selected" }).click();
+  await page.locator(".bulk-actions").getByRole("button", { name: "Download ZIP" }).click();
   const downloaded = await downloadPromise;
   const files = unzipSync(new Uint8Array(await readFile(await downloaded.path())));
   expect(Object.keys(files).filter((name) => /\.(obj|stl)$/.test(name))).toHaveLength(3);
@@ -196,18 +193,18 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
   const teacherColours = await previewColours(page);
   expect(teacherColours.blue.count).toBeGreaterThan(300);
   expect(teacherColours.purple.count).toBeGreaterThan(300);
-  await page.getByRole("button", { name: "Close preview" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
   await page.goto("http://127.0.0.1:4174/");
-  const home = page.getByRole("region", { name: "View at home" });
+  const home = page.getByRole("region", { name: "Find your uploads" });
   await home.getByLabel("School").selectOption({ label: "School A" });
   await home.getByLabel("First name").fill("Casey");
-  await home.getByRole("button", { name: "View files" }).click();
+  await home.getByRole("button", { name: "Find files" }).click();
   await home.getByRole("button", { name: /small.stl/ }).click();
   await expect(page.locator(".viewer-unit-label")).toHaveText("25.0 × 10.0 × 10.0 mm");
   const homeColours = await previewColours(page);
   expect(homeColours.blue.count).toBeGreaterThan(300);
   expect(homeColours.purple.count).toBeGreaterThan(300);
-  await page.getByRole("button", { name: "Close model" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
   await page.route("**/api/admin/submissions", async (route) => {
     const response = await route.fetch();
     const body = await response.json();
@@ -215,10 +212,9 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
     await route.fulfill({ response, json: body });
   });
   await page.goto("http://127.0.0.1:4174/teacher");
-  await page.getByRole("button", { name: /School A.*Open school/ }).click();
-  await page.getByRole("button", { name: /Design Studio.*View designs/ }).click();
+  await page.getByRole("combobox", { name: "Class", exact: true }).selectOption({ label: "Design Studio" });
   await page.getByLabel("Select all files").check();
-  await page.getByRole("button", { name: "Export selected" }).click();
+  await page.locator(".bulk-actions").getByRole("button", { name: "Download ZIP" }).click();
   const batches = page.getByRole("dialog", { name: "Download files" });
   await expect(batches).toBeVisible();
   await expect(batches.getByRole("button", { name: /Download ZIP/ })).toHaveCount(2);
@@ -248,11 +244,10 @@ test("ZIP model errors keep the batch unsubmitted; OBJ material groups can be co
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({ name: "damaged-model.zip", mimeType: "application/zip", buffer: Buffer.from(archive) });
-  await expect(page.getByText("Review file 1 of 2", { exact: false })).toBeVisible();
-  await expect(page.getByText("No common issues found")).toBeVisible();
-  await page.getByText("I’ve checked my model and it’s ready for the printing team.").click();
-  await page.getByRole("button", { name: "Confirm and review next file" }).click();
-  await expect(page.getByRole("heading", { name: "UPLOAD YOUR 3D PRINTING FILES" })).toBeVisible();
+  await expect(page.getByText("File 1 of 2", { exact: false })).toBeVisible();
+  await expect(page.getByText("No problems found")).toBeVisible();
+  await page.getByRole("button", { name: "Next file" }).click();
+  await expect(page.getByRole("heading", { name: "Send a file to be 3D printed" })).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("broken.obj");
   await expect(page.getByRole("alert")).toContainText("Remove this file from the ZIP");
   const grouped = obj().replace("o Left\n", "o Shared\nusemtl Base\n").replace("o Right\n", "usemtl Detail\n");

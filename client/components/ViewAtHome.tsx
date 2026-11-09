@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, FileBox, Home, X } from "lucide-react";
+import { FileBox, X } from "lucide-react";
 import { api } from "../lib/api";
 import { fileFormat } from "../../shared/formats.js";
 import { loadModel, prepareRequestedParts, type LoadedModel } from "../lib/model";
@@ -37,8 +37,8 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
       fetch(`/api/student/files/${selected.id}/model`, { headers: { Authorization: "Bearer " + token } })
         .then(async (response) => {
           if (!response.ok) {
-            if (response.status === 404) throw new Error("This has been deleted.");
-            throw new Error("Please enter your school and first name again.");
+            if (response.status === 404) throw new Error("This file has been deleted.");
+            throw new Error("Your search has expired. Search for your files again.");
           }
           return new File([await response.blob()], selected.name);
         })
@@ -76,13 +76,8 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
   };
   return (
     <section className="view-at-home panel" aria-labelledby="view-home-title">
-      <div className="home-section-heading">
-        <Home size={20} />
-        <div>
-          <h2 id="view-home-title">View at home</h2>
-          <p>Choose your school and enter your first name to view your uploaded files.</p>
-        </div>
-      </div>
+      <h2 id="view-home-title">Find your uploads</h2>
+      <p className="hint">See the files you’ve sent in the last 14 days, from school or at home.</p>
       <form className="home-search" onSubmit={(e) => search(e)}>
         <label className="field">
           School
@@ -119,17 +114,16 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
           />
         </label>
         <button className="button primary" disabled={busy}>
-          {busy ? <span className="spinner" /> : null} View files <ArrowRight size={16} />
+          {busy && <span className="spinner" />} {busy ? "Searching…" : "Find files"}
         </button>
       </form>
-      <p className="small muted home-privacy">
-        Anyone who knows your school and first name can find these models. Files are available for 14 days.
-      </p>
+      <p className="hint home-privacy">Anyone who knows your school and first name can see these files.</p>
       <ErrorMessage message={error} />
       {files &&
         (!files.length ? (
-          <p className="deleted-message" role="status">
-            This has been deleted.
+          <p className="empty-message" role="status">
+            No files found for that school and first name. Check the spelling, or your file may have been removed after
+            14 days.
           </p>
         ) : (
           <div className="home-file-grid">
@@ -139,8 +133,8 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
           </div>
         ))}
       {files && nextOffset !== null && (
-        <button className="button secondary home-more" onClick={() => search(undefined, true)} disabled={busy}>
-          More files <ArrowRight size={15} />
+        <button className="button secondary" onClick={() => search(undefined, true)} disabled={busy}>
+          Show more
         </button>
       )}
       {selected && (
@@ -158,15 +152,15 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
         >
           <div className="modal-heading">
             <h2 id="home-model-title">{selected.name}</h2>
-            <button className="icon-button" aria-label="Close model" onClick={() => setSelected(null)}>
+            <button className="icon-button" aria-label="Close" onClick={() => setSelected(null)}>
               <X size={20} />
             </button>
           </div>
           <div className="modal-body">
             {!fileFormat(selected.name)?.preview ? (
               <div className="unsupported-preview">
-                <FileBox size={40} />
-                <p>Preview not supported for this file type.</p>
+                <FileBox size={32} strokeWidth={1.5} />
+                <p>There’s no 3D preview for this file type.</p>
               </div>
             ) : modelError ? (
               <ErrorMessage message={modelError} />
@@ -179,10 +173,10 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
                 advancedSources={selected.view?.advancedSources}
               />
             ) : (
-              <Loading />
+              <Loading label="Loading model…" />
             )}
-            <p className="small muted home-model-date">
-              Uploaded {dateLabel(selected.createdAt)} · Available until {dateLabel(selected.expiresAt)}
+            <p className="hint home-model-date">
+              Sent {dateLabel(selected.createdAt)} · Available until {dateLabel(selected.expiresAt)}
             </p>
           </div>
         </dialog>
@@ -192,6 +186,7 @@ export default function ViewAtHome({ schools }: { schools: Option[] }) {
 }
 function HomeFileCard({ file, token, onClick }: { file: StudentFile; token: string; onClick: () => void }) {
   const [url, setUrl] = useState("");
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true,
       objectUrl = "";
@@ -205,7 +200,9 @@ function HomeFileCard({ file, token, onClick }: { file: StudentFile; token: stri
         if (active) setUrl(objectUrl);
         else URL.revokeObjectURL(objectUrl);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (active) setFailed(true);
+      });
     return () => {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -215,16 +212,17 @@ function HomeFileCard({ file, token, onClick }: { file: StudentFile; token: stri
     <button className="home-file-card" onClick={onClick}>
       {url ? (
         <img src={url} alt={`Preview of ${file.name}`} />
-      ) : (
-        <div className="home-file-placeholder">
-          <FileBox size={25} />
+      ) : failed ? (
+        <div className="thumb-empty">
+          <FileBox size={24} strokeWidth={1.5} aria-label="No preview" />
         </div>
+      ) : (
+        <div className="thumb-skeleton" aria-hidden="true" />
       )}
       <span>
         <strong>{file.name}</strong>
-        <small>Uploaded {dateLabel(file.createdAt)}</small>
+        <small>Sent {dateLabel(file.createdAt)}</small>
       </span>
-      <ArrowRight size={16} />
     </button>
   );
 }

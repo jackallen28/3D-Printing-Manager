@@ -4,35 +4,31 @@ test("student completes upload; teacher browses, downloads, marks printed and de
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "UPLOAD YOUR 3D PRINTING FILES" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Send a file to be 3D printed" })).toBeVisible();
   await page.screenshot({ path: "test-results/student-home.png", fullPage: true });
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({ name: "my-robot.stl", mimeType: "application/octet-stream", buffer: stl() });
-  await expect(page.getByText("No common issues found")).toBeVisible();
+  await expect(page.getByText("No problems found")).toBeVisible();
   await page
     .getByRole("radiogroup", { name: "Available print colours" })
     .getByRole("radio", { name: "Blue", exact: true })
     .check();
-  await page.getByText("I’ve checked my model and it’s ready for the printing team.").click();
   await page.screenshot({ path: "test-results/student-model.png", fullPage: true });
-  await page.getByRole("button", { name: "Confirm my model" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("First name").fill("Mia");
   await page.getByLabel("School", { exact: false }).first().selectOption({ label: "BNTS Demo School" });
-  await page.getByLabel("BNTS staff member").selectOption({ label: "BNTS Team" });
+  await page.getByLabel("BNTS teacher").selectOption({ label: "BNTS Team" });
   await page.getByLabel("Class code").fill("design8");
-  await page.getByLabel("Additional notes").fill("Please keep the base flat.");
-  await page.getByRole("button", { name: "Review my request" }).click();
+  await page.getByLabel("Notes for your teacher").fill("Please keep the base flat.");
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("definition").filter({ hasText: "Mia" })).toBeVisible();
-  await page.getByText("Everything looks right. Send my file to the printing team.").click();
-  await page.getByRole("button", { name: "Submit for printing" }).click();
-  await expect(page.getByRole("heading", { name: "File submitted." })).toBeVisible();
+  await page.getByRole("button", { name: "Send for printing" }).click();
+  await expect(page.getByRole("heading", { name: /been sent/ })).toBeVisible();
   await page.goto("/teacher");
-  await page.getByLabel("Teacher password").fill("local-demo-teacher-password");
+  await page.getByLabel("Password").fill("local-demo-teacher-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Print requests." })).toBeVisible();
-  await page.getByRole("button", { name: /BNTS Demo School.*Open school/ }).click();
-  await page.getByRole("button", { name: /Year 8 · Design.*View designs/ }).click();
+  await expect(page.getByRole("heading", { name: "Print requests" })).toBeVisible();
   await page.screenshot({ path: "test-results/teacher-queue.png", fullPage: true });
   await page.getByRole("button", { name: /Mia.*my-robot.stl/ }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -41,10 +37,10 @@ test("student completes upload; teacher browses, downloads, marks printed and de
   await page.getByRole("link", { name: "Download original STL" }).click();
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toMatch(/^BNTS-Demo-School_BLUE_/);
-  await page.getByRole("dialog").getByLabel("Print status").selectOption("printed");
-  await expect(page.getByRole("dialog").getByLabel("Print status")).toHaveValue("printed");
+  await page.getByRole("dialog").getByLabel("Status").selectOption("printed");
+  await expect(page.getByRole("dialog").getByLabel("Status")).toHaveValue("printed");
   await page.screenshot({ path: "test-results/teacher-preview.png", fullPage: true });
-  await page.getByRole("button", { name: "Delete submission" }).click();
+  await page.getByRole("button", { name: "Delete request" }).click();
   await page.getByRole("button", { name: "Delete permanently" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   expect(errors).toEqual([]);
@@ -60,7 +56,7 @@ test("3MF preserves multiple source colours and offers separate Bambu selections
   await expect(
     page.getByRole("group", { name: "Model sections" }).getByRole("button", { name: /Section 2/ }),
   ).toBeVisible();
-  await expect(page.getByText("No common issues found")).toBeVisible();
+  await expect(page.getByText("No problems found")).toBeVisible();
   await page
     .getByRole("group", { name: "Model sections" })
     .getByRole("button", { name: /Section 1/ })
@@ -84,7 +80,7 @@ test("floating CAD parts are highlighted and invalid file types are rejected", a
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({ name: "bad.txt", mimeType: "text/plain", buffer: Buffer.from("no") });
-  await expect(page.getByRole("alert")).toContainText("This file type is not enabled");
+  await expect(page.getByRole("alert")).toContainText("TXT files can’t be uploaded");
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({
@@ -94,6 +90,10 @@ test("floating CAD parts are highlighted and invalid file types are rejected", a
     });
   await expect(page.getByText("1 possibly floating part")).toBeVisible();
   await expect(page.getByRole("button", { name: "Highlight floating parts" })).toHaveAttribute("aria-pressed", "true");
+  // Warnings must be acknowledged before continuing; clean models need no checkbox.
+  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await page.getByText("I’ve read the model check", { exact: false }).click();
+  await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
 });
 test("mobile upload fits viewport and teacher route requires a password", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -102,8 +102,8 @@ test("mobile upload fits viewport and teacher route requires a password", async 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: "test-results/student-mobile.png", fullPage: true });
   await page.goto("/teacher");
-  await expect(page.getByLabel("Teacher password")).toBeVisible();
-  await page.getByLabel("Teacher password").fill("incorrect-password");
+  await expect(page.getByLabel("Password")).toBeVisible();
+  await page.getByLabel("Password").fill("incorrect-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("not correct");
 });
@@ -127,20 +127,14 @@ test("OBJ has a 3D preview; STEP uploads without a preview", async ({ page }) =>
       mimeType: "model/step",
       buffer: Buffer.from("ISO-10303-21;\nHEADER;ENDSEC;DATA;ENDSEC;END-ISO-10303-21;"),
     });
-  await expect(page.getByText("Preview not supported for this file type.")).toBeVisible();
-  await expect(
-    page.getByText(
-      "Model checks are not available for this file type. Check the file in your CAD program before continuing. Staff will check the original file before printing.",
-    ),
-  ).toBeVisible();
-  await page.getByText("I’ve checked my model and it’s ready for the printing team.").click();
-  await page.getByRole("button", { name: "Confirm my model" }).click();
+  await expect(page.getByText("There’s no 3D preview for this file type.", { exact: false })).toBeVisible();
+  await expect(page.getByText("STEP files can’t be checked here.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("First name").fill("Sam");
   await page.getByLabel("School", { exact: false }).first().selectOption({ label: "BNTS Demo School" });
-  await page.getByLabel("BNTS staff member").selectOption({ label: "BNTS Team" });
-  await page.getByRole("button", { name: "Review my request" }).click();
-  await expect(page.getByText("Preview not supported for this file type.")).toBeVisible();
-  await page.getByText("Everything looks right. Send my file to the printing team.").click();
-  await page.getByRole("button", { name: "Submit for printing" }).click();
-  await expect(page.getByRole("heading", { name: "File submitted." })).toBeVisible();
+  await page.getByLabel("BNTS teacher").selectOption({ label: "BNTS Team" });
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("There’s no 3D preview for this file type.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Send for printing" }).click();
+  await expect(page.getByRole("heading", { name: /been sent/ })).toBeVisible();
 });

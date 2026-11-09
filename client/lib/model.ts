@@ -198,11 +198,11 @@ function load3mf(buffer: ArrayBuffer) {
   group.scale.setScalar(units[unit]);
   if (painted) {
     notices.push(
-      "This file contains slicer-specific painted colours. The original painting is preserved in your file, but cannot be accurately shown here. Choose colour requests for staff to apply in Bambu Studio.",
+      "This file has painted colours from a slicer. They are kept in your file but can’t be shown here. Choose your colours below.",
     );
     filament.forEach((c) => palette.add(c));
   }
-  if (textured) notices.push("Texture images are not shown. Staff will check the original texture in the slicer.");
+  if (textured) notices.push("Textures aren’t shown in the preview. They are kept in your file.");
   if (palette.size > 32)
     throw new Error("This model uses more than 32 colours. Simplify its colours before uploading.");
   return { object: group, palette: [...palette], notices };
@@ -299,7 +299,7 @@ export async function loadModel(file: File): Promise<LoadedModel> {
       palette: [...palette],
       parts,
       notices: [
-        "This preview assumes millimetres and a Z-up orientation. OBJ material files and textures are not included.",
+        "OBJ files don’t store units, so sizes are shown in millimetres. Material files and textures aren’t included.",
       ],
     };
   } else {
@@ -323,7 +323,7 @@ export async function loadModel(file: File): Promise<LoadedModel> {
     loaded = {
       object,
       palette: ["#19c1ca"],
-      notices: ["STL has no measurement units. This preview assumes millimetres."],
+      notices: ["STL files don’t store units, so sizes are shown in millimetres."],
     };
   }
   loaded.object.updateMatrixWorld(true);

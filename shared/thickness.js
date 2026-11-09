@@ -87,7 +87,7 @@ export function thinFeatures(samples, partBounds, triangleParts, scalePercent = 
           {
             code: "thin-features",
             title: "Some areas may be too thin",
-            detail: `Amber areas are under ${MIN_WALL_MM} mm at this scale. Make them thicker or ask your teacher for help.`,
+            detail: `Yellow areas are thinner than ${MIN_WALL_MM} mm at this size. Make them thicker or ask your teacher.`,
           },
         ]
       : [],

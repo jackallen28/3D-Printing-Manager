@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
-  ArrowRight,
   Upload,
   Check,
   CheckCircle2,
   FileBox,
-  X,
-  ShieldCheck,
-  Layers3,
-  Palette,
-  Sparkles,
   AlertTriangle,
   ExternalLink,
   RotateCcw,
@@ -21,7 +15,7 @@ import {
 import { api, upload, setUploadMode } from "./lib/api";
 import { loadModel, splitModelParts, areaName, type LoadedModel } from "./lib/model";
 import { Viewer, type ViewerHandle } from "./components/Viewer";
-import { ErrorMessage, Loading, bytesLabel, dateLabel } from "./components/Layout";
+import { ErrorMessage, Field, Loading, bytesLabel, dateLabel } from "./components/Layout";
 import ColourEditor from "./components/ColourEditor";
 import PrintPreferences, { printOptions, type FilePrintOptions } from "./components/PrintPreferences";
 import { splitGroups, splitIntoFiles } from "../shared/split-files.js";
@@ -30,7 +24,7 @@ import { dimensionWarnings } from "../shared/geometry.js";
 import { thinFeatures } from "../shared/thickness.js";
 import { printTestResult } from "../shared/print-test.js";
 import { scaleLabel } from "../shared/printing.js";
-import { PREFERENCES, ADVANCED_FILAMENT, ADVANCED_HEX } from "../shared/catalog.js";
+import { ADVANCED_FILAMENT, ADVANCED_HEX, displayLabel } from "../shared/catalog.js";
 import type { Analysis, Config, Details } from "./types";
 import AnalysisWorker from "./lib/analysis.worker?worker&inline";
 import { fileFormat, enabledFormats } from "../shared/formats.js";
@@ -69,7 +63,7 @@ type PreparedPrint = {
     "colour" | "customColour" | "colourMapping" | "advancedFilamentNote" | "scalePercent" | "dimensionsMm"
   > & { printOptions?: FilePrintOptions };
 };
-const steps = ["Upload", "Check your model", "Your details", "Review and submit"];
+const steps = ["Upload", "Check model", "Your details", "Review"];
 export default function Student() {
   const [config, setConfig] = useState<Config | null>(null),
     [configError, setConfigError] = useState("");
@@ -129,12 +123,20 @@ export default function Student() {
   const choose = async (f?: File, fromArchive = false) => {
     if (!f) return;
     setError("");
-    if (!config?.acceptedExtensions.includes(f.name.split(".").at(-1)!.toLowerCase())) {
-      setError("This file type is not enabled. Choose one of the listed formats.");
+    const extension = f.name.includes(".") ? f.name.split(".").at(-1)!.toLowerCase() : "";
+    if (!config?.acceptedExtensions.includes(extension)) {
+      setError(
+        `${extension ? extension.toUpperCase() + " files" : "Files without a type"} can’t be uploaded. Use ${fileTypesLabel(config?.acceptedExtensions || [])}.`,
+      );
       return;
     }
-    if (f.size > (config?.maxBytes || 50 * 1024 * 1024) || !f.size) {
-      setError(`Choose a non-empty file up to ${(config?.maxBytes || 50 * 1024 * 1024) / 1024 / 1024} MB.`);
+    const maxBytes = config?.maxBytes || 50 * 1024 * 1024;
+    if (!f.size) {
+      setError("This file is empty. Export it again from your CAD program.");
+      return;
+    }
+    if (f.size > maxBytes) {
+      setError(`This file is over ${maxBytes / 1024 / 1024} MB. Export a smaller file, or ask your teacher.`);
       return;
     }
     setBusy(true);
@@ -235,7 +237,7 @@ export default function Student() {
         w.terminate();
       };
       w.onerror = () => {
-        setError("The model checks could not finish. Try a smaller export.");
+        setError("The model check didn’t finish. Try exporting a smaller file.");
         setAnalysing(false);
         w.terminate();
       };
@@ -346,25 +348,26 @@ export default function Student() {
     setError("");
     setBusy(true);
     try {
-      if (printTest === "running") throw new Error("Finish the test preview before confirming.");
-      if (model && !analysis) throw new Error("Wait for the model checks to finish.");
-      if (!details.readyConfirmed) throw new Error("Confirm that you have checked your model.");
+      if (printTest === "running") throw new Error("Wait for the test print to finish.");
+      if (model && !analysis) throw new Error("Wait for the model check to finish.");
+      if (scaledAnalysis?.warnings.length && !details.readyConfirmed)
+        throw new Error("Tick the box to show you’ve read the model check.");
       if (needsAdvanced && !details.advancedFilamentNote.trim())
-        throw new Error("Describe the advanced filament you need.");
-      if (needsCustom && !details.customColour.trim()) throw new Error("Describe the custom colour you would like.");
+        throw new Error("Say which special filament you need.");
+      if (needsCustom && !details.customColour.trim()) throw new Error("Say which colour you’d like.");
       if (
         archiveTotal > 1 &&
         [details.supports, details.printer, details.quality].some((value) => value.startsWith("Custom")) &&
         !details.notes.trim()
       )
-        throw new Error("Add a note explaining your custom preferences for this file.");
+        throw new Error("You chose Other, so add a note explaining what you need.");
       if (archiveTotal > 1 && details.designLink) {
         let valid = false;
         try {
           const link = new URL(details.designLink);
           valid = link.protocol === "https:" && !link.username && !link.password;
         } catch {}
-        if (!valid) throw new Error("Use a shareable https design link.");
+        if (!valid) throw new Error("The design link must be a share link that starts with https://");
       }
       const blob = model ? await viewer.current!.snapshot() : preview;
       if (!blob || !file) throw new Error("The preview is not ready.");
@@ -453,8 +456,8 @@ export default function Student() {
   if (!config && !configError) return <Loading />;
   if (configError)
     return (
-      <section className="narrow panel connection-error">
-        <h1>Connection unavailable</h1>
+      <section className="page narrow">
+        <h1>Can’t connect right now</h1>
         <ErrorMessage message={configError} />
         <button className="button primary" onClick={getConfig}>
           <RotateCcw size={16} /> Try again
@@ -462,221 +465,166 @@ export default function Student() {
       </section>
     );
   if (!config) return null;
+  const typesLabel = fileTypesLabel(config.acceptedExtensions);
+  const maxMb = config.maxBytes / 1024 / 1024;
+  const warnings = scaledAnalysis?.warnings || [];
+  const needsAck = warnings.length > 0;
+  const dimensionsText = dimensionsMm ? dimensionsMm.map((v) => v.toFixed(1)).join(" × ") + " mm" : "";
+  const schoolName = config.schools.find((s) => s.id === details.schoolId)?.name;
+  const teacherName = config.staff.find((s) => s.id === details.staffId)?.name;
+  const colourText = colourNames.map((c) => (c === "Custom" ? details.customColour : displayLabel(c))).join(", ");
   return (
-    <div className={"student " + (step === 0 ? "landing" : "workflow")}>
-      {config.localDemo && (
-        <div className="demo-banner">Development demo · Files stay on this machine, not Google Drive.</div>
-      )}
+    <div className={"student page " + (step === 0 || step === 4 ? "landing" : "workflow")}>
+      {config.localDemo && <div className="demo-banner">Local demo. Files are saved on this computer only.</div>}
       {step === 0 ? (
-        <>
-          <section className="hero">
-            <div className="hero-art" aria-hidden="true">
-              <div className="floating-cube">
-                <svg viewBox="0 0 120 120" fill="none">
-                  <path
-                    d="m60 8 45 26v52L60 112 15 86V34z"
-                    fill="#19c1ca"
-                    fillOpacity=".08"
-                    stroke="#76e4df"
-                    strokeWidth="1.2"
-                  />
-                  <path d="m15 34 45 26 45-26M60 60v52M60 8v52M15 86l45-26 45 26" stroke="#76e4df" strokeOpacity=".4" />
-                  <path d="m60 21 33 19-33 19-33-19z" fill="#19c1ca" fillOpacity=".16" />
-                  <path d="m27 47 33 19v32L27 79z" fill="#19c1ca" fillOpacity=".12" />
-                  <path d="m93 47-33 19v32l33-19z" fill="#b7a2d3" fillOpacity=".25" />
-                </svg>
-              </div>
-              <span className="orbit orbit-one" />
-              <span className="orbit orbit-two" />
-            </div>
-            <h1>
-              UPLOAD YOUR
-              <br />
-              <span>3D PRINTING FILES</span>
-            </h1>
-            <p className="hero-description">Upload your file for the BNTS printing team.</p>
-            <div
-              className={"drop-zone " + (drag ? "dragging" : "") + (!config.acceptingUploads ? " unavailable" : "")}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDrag(true);
-              }}
-              onDragLeave={() => setDrag(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDrag(false);
-                if (config.acceptingUploads && !busy) {
-                  if (e.dataTransfer.files.length > 1) setError("Upload one design at a time.");
-                  else choose(e.dataTransfer.files[0]);
-                }
-              }}
-            >
-              <div className="upload-icon">
-                <Upload size={27} strokeWidth={1.5} />
-              </div>
-              <h2>{busy ? "Opening your file…" : drag ? "Release to select your file" : "Drop your file here"}</h2>
-              <p>or choose a file from your computer</p>
-              <input
-                ref={input}
-                type="file"
-                accept={config.acceptedExtensions.map((e) => "." + e).join(",")}
-                aria-label="Upload a 3D printing file"
-                className="visually-hidden"
-                onChange={(e) => choose(e.target.files?.[0])}
-              />
-              <button
-                className="button primary upload-button"
-                disabled={busy || !config.acceptingUploads}
-                onClick={() => input.current?.click()}
-              >
-                {busy ? <span className="spinner" /> : <FileBox size={18} />} Choose a file <ArrowRight size={17} />
-              </button>
-              <div className="file-types">
-                <span>STL</span>
-                <span>OBJ</span>
-                <span>STEP</span>
-                <span>3MF</span>
-                <span>ZIP</span>
-                {config.acceptedExtensions.some((e) => !["stl", "obj", "step", "stp", "3mf", "zip"].includes(e)) && (
-                  <span>+ more</span>
-                )}
-                <i />
-                Up to {config.maxBytes / 1024 / 1024} MB per file
-              </div>
-            </div>
-            <ErrorMessage message={error} />
-            {!config.acceptingUploads && (
-              <p className="setup-notice">The printing team is setting things up. Please check back shortly.</p>
-            )}
-            <p className="privacy-line">
-              <ShieldCheck size={14} /> No student account needed. Files are automatically deleted after 14 days.
-            </p>
-          </section>
-          <section className="how-it-works" aria-label="How it works">
-            {[
-              { icon: Upload, title: "Upload a file", text: "Choose a supported file from your computer." },
-              { icon: Layers3, title: "Check your model", text: "View your file in 3D and check for issues." },
-              { icon: Palette, title: "Choose print options", text: "Choose colours and add your details." },
-            ].map((item, i) => (
-              <div className="how-item" key={item.title}>
-                <span className="how-icon">
-                  <item.icon size={20} strokeWidth={1.5} />
-                </span>
-                <div>
-                  <h3>
-                    <span>0{i + 1}</span>
-                    {item.title}
-                  </h3>
-                  <p>{item.text}</p>
-                </div>
-              </div>
-            ))}
-          </section>
-        </>
-      ) : step === 4 ? (
-        <section className="success-screen narrow">
-          <div className="success-icon">
-            <Check size={40} />
-          </div>
-          <p className="eyebrow">UPLOAD COMPLETE</p>
-          <h1>
-            File <span>submitted.</span>
-          </h1>
-          <p>
-            Thanks, {receipt.firstName}. The BNTS printing team has your file.
-            <br />
-            Staff will check it before printing.
+        <section className="landing-intro" aria-labelledby="landing-title">
+          <h1 id="landing-title">Send a file to be 3D printed</h1>
+          <p className="lead">
+            Upload your model, check it in 3D and choose a colour. Your BNTS teacher will check it before it’s printed.
           </p>
-          <div className="panel receipt">
-            <FileBox size={26} />
-            <div>
-              <strong>Print request received</strong>
-              <p className="filename">{receipt.count > 1 ? receipt.count + " CAD files" : file?.name}</p>
-              <span>
-                Reference {receipt.id.slice(0, 8).toUpperCase()} · Kept until {dateLabel(receipt.expiresAt)}
-              </span>
-            </div>
-            <CheckCircle2 size={22} />
+          <div
+            className={"drop-zone" + (drag ? " dragging" : "") + (!config.acceptingUploads ? " unavailable" : "")}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDrag(true);
+            }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              if (config.acceptingUploads && !busy) {
+                if (e.dataTransfer.files.length > 1)
+                  setError("Drop one file at a time. To send several files, put them in a ZIP.");
+                else choose(e.dataTransfer.files[0]);
+              }
+            }}
+          >
+            <Upload size={24} strokeWidth={1.75} aria-hidden="true" />
+            <p className="drop-title">
+              {busy ? "Opening your file…" : drag ? "Drop to upload" : "Drag your file here, or"}
+            </p>
+            <input
+              ref={input}
+              type="file"
+              accept={config.acceptedExtensions.map((e) => "." + e).join(",")}
+              aria-label="Upload a 3D printing file"
+              className="visually-hidden"
+              onChange={(e) => choose(e.target.files?.[0])}
+            />
+            <button
+              className="button primary"
+              disabled={busy || !config.acceptingUploads}
+              onClick={() => input.current?.click()}
+            >
+              {busy && <span className="spinner" />} Choose a file
+            </button>
+            <p className="hint">
+              {typesLabel}. Up to {maxMb} MB.
+            </p>
           </div>
+          <ErrorMessage message={error} />
+          {!config.acceptingUploads && (
+            <p className="notice">Uploads aren’t open yet. Your teacher is still setting things up.</p>
+          )}
+          <p className="hint">You don’t need an account. Files are deleted after 14 days.</p>
+        </section>
+      ) : step === 4 ? (
+        <section className="success" aria-labelledby="success-title">
+          <span className="success-icon" aria-hidden="true">
+            <Check size={24} strokeWidth={2.5} />
+          </span>
+          <h1 id="success-title">
+            {receipt.count > 1 ? `Your ${receipt.count} files have been sent` : "Your file has been sent"}
+          </h1>
+          <p className="lead">
+            Thanks, {receipt.firstName}. Your BNTS teacher will check {receipt.count > 1 ? "them" : "it"} before
+            printing.
+          </p>
+          <dl className="panel summary-list">
+            <div>
+              <dt>{receipt.count > 1 ? "Files" : "File"}</dt>
+              <dd className="filename">
+                {receipt.count > 1
+                  ? receipt.files.map((f: { originalName: string }) => f.originalName).join(", ")
+                  : file?.name}
+              </dd>
+            </div>
+            <div>
+              <dt>Reference</dt>
+              <dd>{receipt.id.slice(0, 8).toUpperCase()}</dd>
+            </div>
+            <div>
+              <dt>Available until</dt>
+              <dd>{dateLabel(receipt.expiresAt)}</dd>
+            </div>
+          </dl>
           <button className="button primary" onClick={reset}>
-            Upload another file <ArrowRight size={17} />
+            Send another file
           </button>
         </section>
       ) : (
         <>
           <nav className="stepper" aria-label="Upload progress">
-            {steps.map((name, i) => (
-              <div
-                className={step === i ? "current" : step > i ? "done" : ""}
-                key={name}
-                aria-current={step === i ? "step" : undefined}
-              >
-                <span>{step > i ? <Check size={14} /> : i + 1}</span>
-                <b>{name}</b>
-                {i < 3 && <i />}
-              </div>
-            ))}
+            <ol>
+              {steps.map((name, i) => (
+                <li
+                  className={step === i ? "current" : step > i ? "done" : ""}
+                  key={name}
+                  aria-current={step === i ? "step" : undefined}
+                >
+                  <span aria-hidden="true">{step > i ? <Check size={14} strokeWidth={2.5} /> : i + 1}</span>
+                  {name}
+                </li>
+              ))}
+            </ol>
           </nav>
-          <div className="workflow-heading">
-            <p className="eyebrow">STEP {String(step + 1).padStart(2, "0")} / 04</p>
+          <header className="step-heading">
             <h1 ref={heading} tabIndex={-1}>
-              {step === 1 ? (
-                <>
-                  Check your <span>3D model.</span>
-                </>
-              ) : step === 2 ? (
-                <>
-                  Your <span>details.</span>
-                </>
-              ) : (
-                <>
-                  Review <span>your request.</span>
-                </>
-              )}
+              {step === 1 ? "Check your model" : step === 2 ? "Your details" : "Review and send"}
             </h1>
-            <p>
+            <p className="lead">
               {step === 1
-                ? "Rotate your model, check for issues, and choose your colours."
+                ? "Turn your model to check it from every side, then choose its size and colour."
                 : step === 2
-                  ? "Add your first name, school and print preferences."
-                  : "Check your details before sending your file."}
+                  ? "Your teacher uses these to find your print."
+                  : "Check everything is right, then send it to your teacher."}
             </p>
-          </div>
-          {archiveName && (
-            <p className="archive-notice">
-              From {archiveName} · Review file {archiveTotal - archiveQueue.length} of {archiveTotal}. Only supported
-              CAD files will be submitted.
-            </p>
-          )}
+          </header>
           {file && (
             <div className="file-bar">
-              <FileBox size={19} />
+              <FileBox size={18} aria-hidden="true" />
               <strong>{file.name}</strong>
-              <span>{bytesLabel(file.size)}</span>
-              <button className="text-button" onClick={reset} disabled={busy}>
-                <X size={15} /> Change file
-              </button>
+              <span>
+                {bytesLabel(file.size)}
+                {archiveName && ` · File ${archiveTotal - archiveQueue.length} of ${archiveTotal} from ${archiveName}`}
+              </span>
+              {step === 1 && (
+                <button className="text-button" onClick={reset} disabled={busy}>
+                  Change file
+                </button>
+              )}
             </div>
           )}
           <ErrorMessage message={error} />
           {step === 1 && file && (
             <>
               {objects.length > 1 && !splitDismissed && (
-                <section className="panel split-file-prompt" aria-label="Separate objects">
-                  <Info size={22} />
+                <section className="callout" aria-label="Separate objects">
+                  <Info size={20} aria-hidden="true" />
                   <div>
-                    <strong>This file contains {objects.length} objects.</strong>
-                    <p>Would you like to convert them to separate files? You can choose print settings for each one.</p>
-                    {objects.length > 20 && (
-                      <p>Split this file into smaller groups in your CAD program to review up to 20 files at a time.</p>
-                    )}
-                    <div>
+                    <strong>This file has {objects.length} separate objects.</strong>
+                    <p>
+                      {objects.length > 20
+                        ? "That’s too many to split here. Split them into groups of up to 20 in your CAD program."
+                        : "You can split them into separate files, each with its own size and colour, or keep them together."}
+                    </p>
+                    <div className="button-row">
                       <button
                         className="button secondary"
                         disabled={busy || analysing || printTest === "running" || objects.length > 20}
                         onClick={convertObjects}
                       >
-                        Convert to separate files
+                        Split into separate files
                       </button>
                       <button className="text-button" disabled={busy} onClick={() => setSplitDismissed(true)}>
                         Keep as one file
@@ -687,43 +635,24 @@ export default function Student() {
               )}
               <div className="preview-layout">
                 <div className="preview-column">
-                  <>
-                    {model ? (
-                      <Viewer
-                        ref={viewer}
-                        model={model}
-                        analysis={analysis}
-                        mapping={mapping}
-                        scalePercent={details.scalePercent}
-                        advancedSources={advancedSources}
-                        onPartSelect={setSelectedPart}
-                        supportsVisible={showSupports}
-                        onSupportsChange={setShowSupports}
-                      />
-                    ) : (
-                      <UnsupportedPreview filename={file.name} />
-                    )}
-                  </>
-                  <div className="dimension-bar">
-                    {analysis ? (
-                      <>
-                        <span>
-                          <b>{dimensionsMm!.map((d) => d.toFixed(1)).join(" × ")}</b> mm
-                        </span>
-                        <span>{analysis.triangles.toLocaleString()} triangles</span>
-                      </>
-                    ) : (
-                      <span>
-                        {model ? "Reading model dimensions…" : "File will be uploaded in its original format."}
-                      </span>
-                    )}
-                  </div>
-                  <p className="small muted">
-                    The original file is unchanged. Staff apply your saved scale and colour preferences before printing.
-                  </p>
+                  {model ? (
+                    <Viewer
+                      ref={viewer}
+                      model={model}
+                      analysis={analysis}
+                      mapping={mapping}
+                      scalePercent={details.scalePercent}
+                      advancedSources={advancedSources}
+                      onPartSelect={setSelectedPart}
+                      supportsVisible={showSupports}
+                      onSupportsChange={setShowSupports}
+                    />
+                  ) : (
+                    <UnsupportedPreview filename={file.name} />
+                  )}
                   {model && (
-                    <section className="print-test-panel">
-                      <div className="print-test-actions">
+                    <section className="test-print" aria-label="Test print">
+                      <div className="button-row">
                         <button
                           className="button secondary"
                           disabled={
@@ -735,22 +664,19 @@ export default function Student() {
                           }
                           onClick={testPrint}
                         >
-                          <Play size={16} /> Test print
+                          {printTest === "running" ? <span className="spinner" /> : <Play size={16} />} Test print
                         </button>
                         {printTest === "running" && (
                           <button className="text-button" onClick={stopPrintTest}>
-                            <Square size={14} /> Stop preview
+                            <Square size={14} /> Stop
                           </button>
                         )}
                       </div>
-                      <p className="small muted">
-                        This preview estimates how layers build. Your teacher will check the final print.
+                      <p className="hint">
+                        {analysis && (!analysis.complete || analysis.components > 64)
+                          ? "This model is too detailed for a test print. Your teacher will check it."
+                          : "Watch your model print layer by layer to spot problems early."}
                       </p>
-                      {analysis && (!analysis.complete || analysis.components > 64) && (
-                        <p className="small muted">
-                          This model is too detailed for the test preview. Ask your teacher to check it.
-                        </p>
-                      )}
                       {printTest && printTest !== "running" && (
                         <div className={"print-test-result " + printTest.state} role="status">
                           <strong>{printTest.title}</strong>
@@ -761,119 +687,98 @@ export default function Student() {
                               ))}
                             </ul>
                           ) : (
-                            <p>Ask your teacher to check the model before printing.</p>
+                            <p>Your teacher will still check it before printing.</p>
                           )}
                         </div>
                       )}
                     </section>
                   )}
                 </div>
-                <aside className="panel checks-panel">
-                  <div className="section-label">
-                    <Sparkles size={17} /> Model checks
-                  </div>
+                <aside className="panel checks-panel" aria-labelledby="checks-heading">
+                  <h2 id="checks-heading">Model check</h2>
                   {analysing ? (
-                    <Loading />
+                    <Loading label="Checking your model…" />
                   ) : analysis ? (
                     <>
-                      <div className={"check-summary " + (scaledAnalysis!.warnings.length ? "warning" : "")}>
-                        <span>
-                          {scaledAnalysis!.warnings.length ? <AlertTriangle size={22} /> : <CheckCircle2 size={22} />}
-                        </span>
+                      <div className={"check-summary" + (warnings.length ? " warning" : "")}>
+                        {warnings.length ? (
+                          <AlertTriangle size={20} aria-hidden="true" />
+                        ) : (
+                          <CheckCircle2 size={20} aria-hidden="true" />
+                        )}
                         <div>
                           <strong>
                             {!analysis.complete
-                              ? "Staff need to check this model"
-                              : scaledAnalysis!.warnings.length
-                                ? "Check these issues"
+                              ? "Your teacher needs to check this model"
+                              : warnings.length
+                                ? `${warnings.length} ${warnings.length === 1 ? "thing" : "things"} to check`
                                 : model?.format === "obj"
-                                  ? "OBJ preview ready"
-                                  : "No common issues found"}
+                                  ? "Preview ready"
+                                  : "No problems found"}
                           </strong>
                           <small>
-                            {scaledAnalysis!.warnings.length
-                              ? "Ask staff if you need help with a warning."
-                              : model?.format === "obj"
-                                ? "Staff will check the final model before printing."
-                                : "No common mesh issues detected."}
+                            {warnings.length
+                              ? "Fix these in your CAD program, or ask your teacher."
+                              : "Your teacher will still check it before printing."}
                           </small>
                         </div>
                       </div>
-                      <div className="checks-list">
-                        {scaledAnalysis!.warnings.map((w) => (
-                          <div className="check-warning" key={w.code}>
-                            <AlertTriangle size={15} />
-                            <div>
-                              <b>{w.title}</b>
-                              <p>{w.detail}</p>
-                            </div>
-                          </div>
+                      <ul className="checks-list">
+                        {warnings.map((w) => (
+                          <li className="check-warning" key={w.code}>
+                            <b>{w.title}</b>
+                            <p>{w.detail}</p>
+                          </li>
                         ))}
-                        {!scaledAnalysis!.warnings.length &&
-                          (model?.format === "obj" ? (
-                            <>
-                              <div>
-                                <Check size={16} /> Preview loaded
-                              </div>
-                              <div>
-                                <Check size={16} /> Dimensions shown in mm
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div>
-                                <Check size={16} /> {sections ? "Joined sections checked" : "Connected parts checked"}
-                              </div>
-                              <div>
-                                <Check size={16} /> No open mesh edges found
-                              </div>
-                              <div>
-                                <Check size={16} /> Model size checked
-                              </div>
-                            </>
-                          ))}
-                        {analysis.notices.map((n) =>
-                          n.code === "supports" ? (
-                            <button
-                              type="button"
-                              className="check-support-card"
-                              key={n.code}
-                              aria-pressed={showSupports}
-                              disabled={printTest === "running"}
-                              onClick={() => setShowSupports((value) => !value)}
-                            >
-                              <Info size={17} />
-                              <span>
-                                <strong>{n.title}</strong>
-                                <small>{n.detail}</small>
-                                <em>{showSupports ? "Hide supports" : "Simulate supports"}</em>
-                              </span>
-                            </button>
-                          ) : (
-                            <div className="check-info" key={n.code}>
-                              <CheckCircle2 size={15} />
-                              <div>
-                                <b>{n.title}</b>
-                                <p>{n.detail}</p>
-                              </div>
-                            </div>
-                          ),
+                        {!warnings.length && model?.format !== "obj" && (
+                          <>
+                            <li className="check-ok">
+                              <Check size={16} aria-hidden="true" />
+                              {sections ? "Sections are joined" : "Parts are connected"}
+                            </li>
+                            <li className="check-ok">
+                              <Check size={16} aria-hidden="true" /> No holes in the surface
+                            </li>
+                            <li className="check-ok">
+                              <Check size={16} aria-hidden="true" /> Fits on the printer
+                            </li>
+                          </>
                         )}
-                      </div>
+                      </ul>
+                      {analysis.notices.map((n) =>
+                        n.code === "supports" ? (
+                          <button
+                            type="button"
+                            className="support-card"
+                            key={n.code}
+                            aria-pressed={showSupports}
+                            disabled={printTest === "running"}
+                            onClick={() => setShowSupports((value) => !value)}
+                          >
+                            <strong>{n.title}</strong>
+                            <small>{n.detail}</small>
+                            <span className="support-card-action">
+                              {showSupports ? "Hide supports" : "Show supports"}
+                            </span>
+                          </button>
+                        ) : (
+                          <div className="check-info" key={n.code}>
+                            <b>{n.title}</b>
+                            <p>{n.detail}</p>
+                          </div>
+                        ),
+                      )}
                     </>
                   ) : (
-                    <div className="notice">
-                      Model checks are not available for this file type. Check the file in your CAD program before
-                      continuing. Staff will check the original file before printing.
-                    </div>
+                    <p className="hint">
+                      {file.name.split(".").at(-1)?.toUpperCase()} files can’t be checked here. Check it in your CAD
+                      program. Your teacher will also check it before printing.
+                    </p>
                   )}
                 </aside>
               </div>
-              <section className="panel scale-panel">
-                <div className="section-label">Scale your model</div>
-                <p className="small muted">
-                  Adjust the scale to make your print smaller or larger. Dimensions are shown in mm.
-                </p>
+              <section className="panel" aria-labelledby="size-heading">
+                <h2 id="size-heading">Size</h2>
                 <div className="scale-controls">
                   <input
                     type="range"
@@ -884,7 +789,7 @@ export default function Student() {
                     value={details.scalePercent}
                     onChange={(e) => update({ scalePercent: Number(e.target.value), readyConfirmed: false })}
                   />
-                  <label className="field">
+                  <label className="field scale-input">
                     Scale (%)
                     <input
                       type="number"
@@ -899,14 +804,28 @@ export default function Student() {
                       }}
                     />
                   </label>
-                  <button className="text-button" onClick={() => update({ scalePercent: 100, readyConfirmed: false })}>
+                  <button
+                    className="text-button"
+                    disabled={details.scalePercent === 100}
+                    onClick={() => update({ scalePercent: 100, readyConfirmed: false })}
+                  >
                     Reset to 100%
                   </button>
                 </div>
-                <p className="scale-dimensions">
-                  {dimensionsMm
-                    ? dimensionsMm.map((v) => v.toFixed(1)).join(" × ") + " mm"
-                    : "Dimensions are unavailable for this file type."}
+                <p className="scale-result">
+                  {dimensionsMm ? (
+                    <>
+                      Print size: <b>{dimensionsText}</b> (width × depth × height)
+                    </>
+                  ) : model ? (
+                    "Measuring…"
+                  ) : (
+                    "The size can’t be measured for this file type."
+                  )}
+                </p>
+                <p className="hint">
+                  Your file isn’t changed. Your teacher sets this size when printing.
+                  {model?.notices.map((n) => " " + n)}
                 </p>
               </section>
               <ColourEditor
@@ -934,34 +853,38 @@ export default function Student() {
                 onAdvanced={(value) => update({ advancedFilamentNote: value })}
               />
               {archiveTotal > 1 && (
-                <section className="panel details-panel">
-                  <div className="section-label">Print settings for this file</div>
-                  <PrintPreferences value={details} onChange={update} />
+                <section className="panel" aria-labelledby="file-options-heading">
+                  <h2 id="file-options-heading">Print options for this file</h2>
+                  <PrintPreferences key={file.name + file.size} value={details} onChange={update} />
                 </section>
               )}
-              <label className="checkbox-row confirmation">
-                <input
-                  type="checkbox"
-                  checked={details.readyConfirmed}
-                  onChange={(e) => update({ readyConfirmed: e.target.checked })}
-                />
-                <span>
-                  I’ve checked my model and it’s ready for the printing team.
-                  <small>If a warning needs help, I’ll explain it in my notes.</small>
-                </span>
-              </label>
+              {needsAck && (
+                <label className="checkbox-row acknowledge">
+                  <input
+                    type="checkbox"
+                    checked={details.readyConfirmed}
+                    onChange={(e) => update({ readyConfirmed: e.target.checked })}
+                  />
+                  <span>I’ve read the model check. I’ll fix the problems or ask my teacher for help.</span>
+                </label>
+              )}
               <div className="actions">
-                <button className="text-button" onClick={reset}>
-                  <ArrowLeft size={16} /> Back to upload
+                <button className="text-button" onClick={reset} disabled={busy}>
+                  <ArrowLeft size={16} /> Back
                 </button>
                 <button
                   className="button primary"
                   disabled={
-                    busy || printTest === "running" || (!!model && !analysis) || analysing || !details.readyConfirmed
+                    busy ||
+                    printTest === "running" ||
+                    (!!model && !analysis) ||
+                    analysing ||
+                    (needsAck && !details.readyConfirmed)
                   }
                   onClick={confirmModel}
                 >
-                  {archiveQueue.length ? "Confirm and review next file" : "Confirm my model"} <ArrowRight size={17} />
+                  {busy && <span className="spinner" />}
+                  {archiveQueue.length ? "Next file" : "Continue"}
                 </button>
               </div>
             </>
@@ -972,14 +895,14 @@ export default function Student() {
                 e.preventDefault();
                 setError("");
                 if (needsCustom && !details.customColour.trim()) {
-                  setError("Add your custom colour request.");
+                  setError("Say which colour you’d like. Go back to your model to add it.");
                   return;
                 }
                 if (
                   [details.supports, details.printer, details.quality].some((x) => x.startsWith("Custom")) &&
                   !details.notes.trim()
                 ) {
-                  setError("Add a note explaining your custom preferences.");
+                  setError("You chose Other, so add a note explaining what you need.");
                   return;
                 }
                 setBusy(true);
@@ -997,25 +920,20 @@ export default function Student() {
                 }
               }}
             >
-              <section className="panel details-panel">
-                <div className="section-label">
-                  <span className="section-number">01</span> Student details
-                </div>
+              <section className="panel" aria-labelledby="about-heading">
+                <h2 id="about-heading">About you</h2>
                 <div className="form-grid">
-                  <label className="field full">
-                    First name <em>*</em>
+                  <Field label="First name" hint="Just your first name.">
                     <input
                       required
                       maxLength={40}
                       autoComplete="given-name"
                       value={details.firstName}
                       onChange={(e) => update({ firstName: e.target.value })}
-                      placeholder="Just your first name"
                     />
-                    <small>No surname or email needed.</small>
-                  </label>
+                  </Field>
                   <label className="field">
-                    School <em>*</em>
+                    School
                     <select
                       required
                       value={details.schoolId}
@@ -1030,9 +948,9 @@ export default function Student() {
                     </select>
                   </label>
                   <label className="field">
-                    BNTS staff member <em>*</em>
+                    BNTS teacher
                     <select required value={details.staffId} onChange={(e) => update({ staffId: e.target.value })}>
-                      <option value="">Choose a staff member</option>
+                      <option value="">Choose your teacher</option>
                       {config.staff.map((o) => (
                         <option key={o.id} value={o.id}>
                           {o.name}
@@ -1040,8 +958,11 @@ export default function Student() {
                       ))}
                     </select>
                   </label>
-                  <label className="field full">
-                    Class code <span className="optional">optional</span>
+                  <Field
+                    label="Class code"
+                    optional
+                    hint={details.schoolId ? "Only if your teacher gave you one." : "Choose your school first."}
+                  >
                     <input
                       type="text"
                       maxLength={80}
@@ -1049,32 +970,32 @@ export default function Student() {
                       value={details.classCode}
                       onChange={(e) => update({ classCode: e.target.value, classId: "", classroom: "" })}
                       disabled={!details.schoolId}
-                      placeholder="Enter the code from your teacher"
                     />
-                    <small>Leave this blank if you are not joining a class.</small>
-                  </label>
+                  </Field>
                 </div>
               </section>
-              <section className="panel details-panel">
-                <div className="section-label">
-                  <span className="section-number">02</span> How would you like it printed?
-                </div>
+              <section className="panel" aria-labelledby="options-heading">
+                <h2 id="options-heading">Print options</h2>
                 {preparedFiles.length > 1 ? (
                   <>
-                    <p className="small muted">Each file has its own saved print settings.</p>
+                    <p className="hint">You chose options for each file. Go back to change them.</p>
                     <ArchiveSummary prints={preparedFiles} />
                   </>
                 ) : (
                   <>
                     <div className="chosen-colours">
+                      <span className="field-label">Colour</span>
                       {colourNames.map((name) => (
-                        <span key={name}>
-                          <i className="swatch" style={{ background: targetHex(name) }} />
-                          {name === "Custom" ? details.customColour : name}
+                        <span key={name} className="chip">
+                          <i
+                            className={"swatch" + (name === ADVANCED_FILAMENT ? " special-swatch" : "")}
+                            style={{ background: targetHex(name) }}
+                          />
+                          {name === "Custom" ? details.customColour : displayLabel(name)}
                         </span>
                       ))}
                       <button type="button" className="text-button" onClick={() => setStep(1)}>
-                        Change colours
+                        Change
                       </button>
                     </div>
                     <PrintPreferences value={details} onChange={update} />
@@ -1083,10 +1004,11 @@ export default function Student() {
               </section>
               <div className="actions">
                 <button type="button" className="text-button" onClick={() => setStep(1)}>
-                  <ArrowLeft size={16} /> Back to your model
+                  <ArrowLeft size={16} /> Back
                 </button>
                 <button className="button primary" disabled={busy}>
-                  {busy ? "Checking class code…" : "Review my request"} <ArrowRight size={17} />
+                  {busy && <span className="spinner" />}
+                  {busy ? "Checking class code…" : "Continue"}
                 </button>
               </div>
             </form>
@@ -1095,43 +1017,35 @@ export default function Student() {
             <>
               <div className="review-layout">
                 <div>
-                  <>
-                    {model ? (
-                      <Viewer
-                        model={model}
-                        mapping={mapping}
-                        scalePercent={details.scalePercent}
-                        advancedSources={advancedSources}
-                        compact
-                      />
-                    ) : (
-                      <UnsupportedPreview filename={file.name} />
-                    )}
-                  </>
-                  <div className="review-privacy">
-                    <ShieldCheck size={20} />
-                    <p>
-                      The printing team can view your full request. Your model is also available through View at home.
-                      Files are deleted after 14 days.
-                    </p>
-                  </div>
+                  {preparedFiles.length > 1 ? (
+                    <ArchiveSummary prints={preparedFiles} />
+                  ) : model ? (
+                    <Viewer
+                      model={model}
+                      mapping={mapping}
+                      scalePercent={details.scalePercent}
+                      advancedSources={advancedSources}
+                      compact
+                    />
+                  ) : (
+                    <UnsupportedPreview filename={file.name} />
+                  )}
                 </div>
-                <section className="panel review-details">
-                  {preparedFiles.length > 1 && <ArchiveSummary prints={preparedFiles} />}
-                  <div className="section-label">
-                    Print details{" "}
+                <section className="panel" aria-labelledby="review-heading">
+                  <div className="panel-heading">
+                    <h2 id="review-heading">Your request</h2>
                     <button className="text-button" onClick={() => setStep(2)} disabled={busy}>
-                      Edit details
+                      Edit
                     </button>
                   </div>
-                  <dl>
+                  <dl className="summary-list">
                     <div>
                       <dt>First name</dt>
                       <dd>{details.firstName}</dd>
                     </div>
                     <div>
                       <dt>School</dt>
-                      <dd>{config.schools.find((s) => s.id === details.schoolId)?.name}</dd>
+                      <dd>{schoolName}</dd>
                     </div>
                     {details.classId && (
                       <div>
@@ -1140,40 +1054,47 @@ export default function Student() {
                       </div>
                     )}
                     <div>
-                      <dt>BNTS staff</dt>
-                      <dd>{config.staff.find((s) => s.id === details.staffId)?.name}</dd>
+                      <dt>BNTS teacher</dt>
+                      <dd>{teacherName}</dd>
                     </div>
                     {preparedFiles.length === 1 && (
                       <>
                         <div>
-                          <dt>Colour preference</dt>
-                          <dd>{colourNames.map((c) => (c === "Custom" ? details.customColour : c)).join(", ")}</dd>
-                        </div>
-                        <div>
-                          <dt>Print preferences</dt>
-                          <dd>
-                            {scaleLabel(details.scalePercent)}
-                            {dimensionsMm && (
-                              <>
-                                <br />
-                                {dimensionsMm.map((v) => v.toFixed(1)).join(" × ")} mm
-                              </>
-                            )}{" "}
-                            · {details.supports}
-                            <br />
-                            {details.printer} · {details.quality} · {details.copies}{" "}
-                            {details.copies === 1 ? "copy" : "copies"}
-                          </dd>
+                          <dt>Colour</dt>
+                          <dd>{colourText}</dd>
                         </div>
                         {needsAdvanced && (
                           <div>
-                            <dt>Advanced filament</dt>
+                            <dt>Special filament</dt>
                             <dd className="preserve-text">{details.advancedFilamentNote}</dd>
                           </div>
                         )}
+                        <div>
+                          <dt>Size</dt>
+                          <dd>
+                            {scaleLabel(details.scalePercent)}
+                            {dimensionsText && ` · ${dimensionsText}`}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Copies</dt>
+                          <dd>{details.copies}</dd>
+                        </div>
+                        <div>
+                          <dt>Supports</dt>
+                          <dd>{displayLabel(details.supports)}</dd>
+                        </div>
+                        <div>
+                          <dt>Printer</dt>
+                          <dd>{displayLabel(details.printer)}</dd>
+                        </div>
+                        <div>
+                          <dt>Quality</dt>
+                          <dd>{displayLabel(details.quality)}</dd>
+                        </div>
                         {details.notes && (
                           <div>
-                            <dt>Your note</dt>
+                            <dt>Notes</dt>
                             <dd className="preserve-text">{details.notes}</dd>
                           </div>
                         )}
@@ -1192,37 +1113,25 @@ export default function Student() {
                   </dl>
                 </section>
               </div>
-              <label className="checkbox-row confirmation">
-                <input
-                  type="checkbox"
-                  checked={details.detailsConfirmed}
-                  disabled={busy}
-                  onChange={(e) => setDetails((d) => ({ ...d, detailsConfirmed: e.target.checked }))}
-                />
-                <span>
-                  Everything looks right. Send my file to the printing team.
-                  <small>
-                    I understand colour and print preferences are subject to staff approval and availability.
-                  </small>
-                </span>
-              </label>
+              <p className="hint review-note">
+                Colours and options are requests. Your teacher will confirm what’s possible. You can find your file on
+                this site for 14 days.
+              </p>
               {busy && (
                 <div className="upload-progress" role="status">
-                  <div>
+                  <div className="progress-track">
                     <span style={{ width: `${progress}%` }} />
                   </div>
-                  <span>
-                    {progress < 100 ? `Uploading… ${progress}%` : "Saving your file… Please keep this page open."}
-                  </span>
+                  <span>{progress < 100 ? `Sending… ${progress}%` : "Saving… Keep this page open."}</span>
                 </div>
               )}
               <div className="actions">
                 <button className="text-button" onClick={() => setStep(2)} disabled={busy}>
-                  <ArrowLeft size={16} /> Back to details
+                  <ArrowLeft size={16} /> Back
                 </button>
-                <button className="button primary" onClick={submit} disabled={busy || !details.detailsConfirmed}>
-                  {busy ? <span className="spinner" /> : <Upload size={17} />}{" "}
-                  {busy ? "Submitting your file…" : "Submit for printing"} {!busy && <ArrowRight size={17} />}
+                <button className="button primary" onClick={submit} disabled={busy}>
+                  {busy && <span className="spinner" />}
+                  {busy ? "Sending…" : "Send for printing"}
                 </button>
               </div>
             </>
@@ -1234,6 +1143,10 @@ export default function Student() {
       )}
     </div>
   );
+}
+function fileTypesLabel(extensions: string[]) {
+  const names = [...new Set(extensions.filter((e) => e !== "stp").map((e) => e.toUpperCase()))];
+  return names.length > 1 ? names.slice(0, -1).join(", ") + " or " + names.at(-1) : names[0] || "";
 }
 function closestColour(hex: string, config: Config) {
   const rgb = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
@@ -1249,10 +1162,9 @@ function closestColour(hex: string, config: Config) {
 function UnsupportedPreview({ filename }: { filename: string }) {
   return (
     <div className="unsupported-preview">
-      <FileBox size={45} strokeWidth={1.2} />
+      <FileBox size={32} strokeWidth={1.5} aria-hidden="true" />
       <strong>{filename.split(".").at(-1)?.toUpperCase()} file</strong>
-      <p>Preview not supported for this file type.</p>
-      <span>The original file will be sent to the printing team.</span>
+      <p>There’s no 3D preview for this file type. It will still be sent as it is.</p>
     </div>
   );
 }
@@ -1260,10 +1172,12 @@ function UnsupportedPreview({ filename }: { filename: string }) {
 function ArchiveSummary({ prints }: { prints: PreparedPrint[] }) {
   return (
     <div className="archive-summary">
-      <h3>{prints.length} CAD files</h3>
-      {prints.map((print) => (
-        <ArchiveItem key={print.requestId} print={print} />
-      ))}
+      <h3>{prints.length} files</h3>
+      <ul>
+        {prints.map((print) => (
+          <ArchiveItem key={print.requestId} print={print} />
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1274,36 +1188,38 @@ function ArchiveItem({ print }: { print: PreparedPrint }) {
     setUrl(value);
     return () => URL.revokeObjectURL(value);
   }, [print.preview]);
+  const { preferences } = print;
+  const options = preferences.printOptions;
   return (
-    <div>
-      <img src={url} alt={"Preview of " + print.file.name} />
+    <li>
+      {url ? <img src={url} alt={"Preview of " + print.file.name} /> : <div className="thumb-skeleton" />}
       <span>
-        <b>{print.file.name}</b>
+        <b className="filename">{print.file.name}</b>
         <small>
-          {scaleLabel(print.preferences.scalePercent)}
-          {print.preferences.dimensionsMm
-            ? " · " + print.preferences.dimensionsMm.map((v) => v.toFixed(1)).join(" × ") + " mm"
+          {scaleLabel(preferences.scalePercent)}
+          {preferences.dimensionsMm
+            ? " · " + preferences.dimensionsMm.map((v) => v.toFixed(1)).join(" × ") + " mm"
             : ""}
         </small>
         <small>
-          {print.preferences.colourMapping
-            .map((m, i) => (m.partName || "Part " + (i + 1)) + ": " + m.target)
+          {preferences.colourMapping
+            .map(
+              (m, i) =>
+                (preferences.colourMapping.length > 1 ? (m.partName || "Part " + (i + 1)) + ": " : "") +
+                (m.target === "Custom" ? preferences.customColour || "Custom" : displayLabel(m.target)),
+            )
             .join(" · ")}
         </small>
-        {print.preferences.advancedFilamentNote && (
-          <small>Advanced filament: {print.preferences.advancedFilamentNote}</small>
-        )}
-        {print.preferences.printOptions && (
+        {preferences.advancedFilamentNote && <small>Special filament: {preferences.advancedFilamentNote}</small>}
+        {options && (
           <>
             <small>
-              {print.preferences.printOptions.supports} · {print.preferences.printOptions.printer} ·{" "}
-              {print.preferences.printOptions.quality} · {print.preferences.printOptions.copies}{" "}
-              {print.preferences.printOptions.copies === 1 ? "copy" : "copies"}
+              {options.copies} {options.copies === 1 ? "copy" : "copies"} · Supports: {displayLabel(options.supports)}
             </small>
-            {print.preferences.printOptions.notes && <small>Note: {print.preferences.printOptions.notes}</small>}
+            {options.notes && <small>Notes: {options.notes}</small>}
           </>
         )}
       </span>
-    </div>
+    </li>
   );
 }

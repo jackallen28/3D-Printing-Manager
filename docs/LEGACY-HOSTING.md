@@ -26,7 +26,7 @@ npm run build:apps-script
 5. In **Project Settings → Script Properties**, add `TEACHER_PASSWORD` with a unique password of at least 12 characters. Keep it for staff only. Do not put it in the HTML or share it with students. The app creates its session signing secret automatically.
 6. Choose **Deploy → New deployment → Web app**. Set **Execute as: Me** and **Who has access: Anyone**. Approve Google's permissions using the deploying school account. Your school's Google Workspace policy must allow anonymous web apps; an administrator may need to enable this.
 7. Open the deployment's `/exec` URL with **`?page=teacher`** added. Sign in with the teacher password. Keep this staff link private. The password protects the console; hiding its address alone does not protect files.
-8. Under **Setup & supplies**, paste the Google Drive folder link, add schools and staff, optionally add classes, select available colours and enable any extra file types. Click **Save setup**. This also creates an hourly cleanup trigger.
+8. Under **Settings**, paste the Google Drive folder link, add schools and staff, optionally add classes, select available colours and enable any extra file types. Click **Save changes**. This also creates an hourly cleanup trigger.
 9. Share the ordinary `/exec` URL with students. Test one submission, open it in the teacher console, download it and confirm it appears in Drive.
 
 Keep the Drive folder **Restricted**, shared only with the relevant staff. It does not need to be public for students to use this app. A folder link is an address, not an upload credential: the deploying Google account supplies the permission through Google's own authorisation. If the account did not create the folder, give that account permission to add and permanently delete its files. For a Workspace Shared Drive, use a role with deletion rights, such as Content manager.
@@ -37,7 +37,7 @@ When updating the site, rebuild, copy the updated files, then use **Deploy → M
 
 1. Drag in a file or choose one from their computer.
 2. View supported models in 3D, rotate and zoom, review model warnings, and select Bambu PLA colours. Unsupported formats display **“Preview not supported for this file type.”** and still upload normally.
-3. Confirm their file, add their first name, school, BNTS staff member, optional class, print preferences, notes and optional design link.
+3. Confirm their file, add their first name, school, BNTS teacher, optional class, print preferences, notes and optional design link.
 4. Review the request and submit. A receipt confirms the file was stored. Retries of the same request do not create duplicate submissions.
 
 STL, OBJ, STEP (`.step` / `.stp`) and 3MF are always accepted. Staff can also enable PLY, OFF, IGES, BREP, Fusion 360, Blender, ZIP and G-code files.

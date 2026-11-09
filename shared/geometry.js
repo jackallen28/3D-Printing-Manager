@@ -9,9 +9,9 @@ export function analyseGeometry(positions, options = {}) {
     ? [
         {
           code: "obj",
-          title: "OBJ colour parts",
+          title: "OBJ files have colour sections",
           detail:
-            "Separate colour sections and shared surfaces are common in OBJ files. Staff will check the final model in the slicer.",
+            "This is normal for OBJ files. Your teacher will check the model before printing.",
         },
       ]
     : [];
@@ -51,9 +51,9 @@ export function analyseGeometry(positions, options = {}) {
         ...warnings,
         {
           code: "complex",
-          title: "Detailed checks not completed",
+          title: "Too detailed to check fully",
           detail:
-            "This model has over 200,000 triangles. The preview works, but staff must check disconnected parts and mesh errors in the slicer.",
+            "This model has over 200,000 triangles, so only its size was checked. Your teacher will check the rest.",
         },
       ],
     };
@@ -154,8 +154,8 @@ export function analyseGeometry(positions, options = {}) {
       floatingIds = new Set();
       notices.push({
         code: "obj-complex",
-        title: "Part positions need a staff check",
-        detail: "This OBJ has many separate sections. Staff will check which parts need supports.",
+        title: "Your teacher needs to check this",
+        detail: "This OBJ has a lot of separate sections. Your teacher will check which parts need supports.",
       });
     }
   }
@@ -172,15 +172,15 @@ export function analyseGeometry(positions, options = {}) {
       code: "floating",
       title: `${floatingIds.size} possibly floating ${floatingIds.size === 1 ? "part" : "parts"}`,
       detail:
-        "Highlighted parts do not touch the lowest build plane. Check they are attached, or ask staff about supports.",
+        "Red parts aren’t touching anything below them, so they would print in mid-air. Attach them to the model or ask your teacher.",
     });
   if (parts.size > 1)
     (isObj ? notices : warnings).push({
       code: "parts",
       title: `${parts.size} separate parts`,
       detail: isObj
-        ? "Separate parts can be intentional colour sections. Choose one colour for each part."
-        : "Check these are intentional. Unjoined CAD shapes can fall apart or need separate printing.",
+        ? "These may be colour sections. Choose a colour for each one."
+        : "Shapes that aren’t joined print as separate pieces. Join them in your CAD program if they should be one piece.",
     });
   const meshWarning = isObj ? openEdges > edges.size * 0.2 : openEdges || nonManifold;
   const problemEdges = [];
@@ -194,16 +194,16 @@ export function analyseGeometry(positions, options = {}) {
   if (meshWarning)
     warnings.push({
       code: "mesh",
-      title: isObj ? "Check the OBJ surfaces" : "The mesh may need repairing",
+      title: isObj ? "Check the OBJ surfaces" : "The model has holes",
       detail: isObj
-        ? "Many outer edges are open. Ask staff to check that the model is suitable for printing."
-        : `${openEdges.toLocaleString()} open edges and ${nonManifold.toLocaleString()} non-manifold edges found. Re-export a solid, or ask staff to repair it.`,
+        ? "Many outer edges are open. Ask your teacher to check the model can be printed."
+        : `The surface has gaps (${openEdges.toLocaleString()} open and ${nonManifold.toLocaleString()} overlapping edges). Export it again as a solid, or ask your teacher.`,
     });
   if (isObj ? degenerate >= Math.max(10, triangles * 0.01) : degenerate)
     warnings.push({
       code: "degenerate",
-      title: "Some triangles have no area",
-      detail: "The CAD export contains degenerate triangles. Re-export or ask staff to check the mesh.",
+      title: "Some faces are broken",
+      detail: "Some triangles in the file are flat. Export the model again, or ask your teacher.",
     });
   const partBounds = [...parts.values()],
     { thicknessSamples, supportContacts } = measurePrintFeatures(
@@ -218,7 +218,7 @@ export function analyseGeometry(positions, options = {}) {
       code: "supports",
       title: "About supports",
       detail:
-        "Supports hold up overhanging areas while they print. They are removed afterwards and may leave a rough underside.",
+        "Overhanging areas need supports to hold them up while printing. Supports are removed afterwards and can leave a rough surface.",
     });
   if (!isObj) warnings.push(...thinFeatures(thicknessSamples, partBounds, triangleParts).warnings);
   return {
@@ -250,20 +250,20 @@ export function dimensionWarnings(dimensions) {
   if (Math.max(...dimensions) > 256)
     warnings.push({
       code: "size",
-      title: "This might be too big",
-      detail: "This size extends past a 256 mm Bambu build volume. Reduce the scale or ask staff.",
+      title: "Too big for the printer",
+      detail: "The printer fits models up to 256 mm on each side. Make it smaller under Size.",
     });
   if (Math.min(...dimensions) < 0.8)
     warnings.push({
       code: "thin",
       title: "Very thin model",
-      detail: "One dimension is under 0.8 mm. Thin features may not print reliably.",
+      detail: "One side is thinner than 0.8 mm, so it may not print properly.",
     });
   if (Math.max(...dimensions) < 2)
     warnings.push({
       code: "units",
-      title: "Check the size",
-      detail: "This model is very small. All dimensions are shown in mm. Check your scale and CAD export.",
+      title: "Very small model",
+      detail: "Sizes are in millimetres. Check the size is what you expected, and change it under Size if needed.",
     });
   return warnings;
 }

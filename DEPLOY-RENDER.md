@@ -58,11 +58,11 @@ Replace the example domain with the exact address in Render's `PUBLIC_URL`. Save
 ## 5. Connect the account and choose the folder
 
 1. Open `https://YOUR-SITE.onrender.com/teacher` and sign in with `TEACHER_PASSWORD`.
-2. Open **Setup & supplies → Connect Google Drive**.
+2. Open **Settings → Connect Google Drive**.
 3. Google opens its own sign-in/approval page. Sign into the school account that can add and delete files in the printing folder, then approve access. Google sends an authorisation code to the server, which exchanges it for access and refresh tokens.
 4. Back in setup, click **Copy new refresh token**. Add it as `GOOGLE_REFRESH_TOKEN` in **Render → Environment**. Keep it private. Save and redeploy. This lets the connection survive free-service restarts; the server refreshes short-lived access tokens automatically.
 5. Return to the teacher console and sign in again if necessary. The connection should show **Connected**, with no token persistence notice.
-6. Paste the shared Google Drive folder link. Add schools, staff, optional classes, colours and any extra file types, then click **Save setup**.
+6. Paste the shared Google Drive folder link. Add schools, staff, optional classes, colours and any extra file types, then click **Save changes**.
 
 Keep the Drive folder **Restricted**, shared only with staff. The account that approved the connection must be able to add and permanently delete its files. For a Workspace Shared Drive, use a suitable role such as Content manager. A folder link alone does not grant these permissions. The app never makes the folder public.
 

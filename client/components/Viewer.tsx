@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useMemo } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { Home, Box, ScanLine, Move, Layers3, Ruler } from "lucide-react";
+import { Home, Box, ScanLine, Layers3, Ruler } from "lucide-react";
 import { addGlitterShader } from "../lib/glitter";
 import { animatePrint, type PrintProgress } from "../lib/print-animation";
 import { buildSupportPreview } from "../lib/support-preview";
@@ -131,7 +131,7 @@ export const Viewer = forwardRef<
         return;
       }
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-      renderer.setClearColor("#101f2c");
+      renderer.setClearColor("#0f1b21");
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       host.appendChild(renderer.domElement);
       renderer.domElement.setAttribute("aria-label", "3D model. Drag to rotate, scroll or pinch to zoom.");
@@ -146,7 +146,7 @@ export const Viewer = forwardRef<
       const light = new THREE.DirectionalLight("#ffffff", 3.3);
       light.position.set(80, 140, 90);
       scene.add(light);
-      const rim = new THREE.DirectionalLight("#b8a4ed", 1.8);
+      const rim = new THREE.DirectionalLight("#cfe3ea", 1.4);
       rim.position.set(-80, 40, -70);
       scene.add(rim);
       const object = model.object.clone(true);
@@ -177,7 +177,7 @@ export const Viewer = forwardRef<
       rotate.add(content);
       rotate.scale.setScalar(scaleRef.current / 100);
       scene.add(rotate);
-      const grid = new THREE.GridHelper(300, 30, "#365361", "#203743");
+      const grid = new THREE.GridHelper(300, 30, "#3a4d57", "#24333b");
       scene.add(grid);
       const target = new THREE.Vector3(0, (size.z * 0.5 * scaleRef.current) / 100, 0);
       const render = () => renderer.render(scene, camera);
@@ -408,12 +408,9 @@ export const Viewer = forwardRef<
           {baseDimensions.map((n) => ((n * scalePercent) / 100).toFixed(1)).join(" × ")} mm
         </div>
         <div className="viewer-canvas" ref={container} />
-        <div className="viewer-label">
-          <span className="live-dot" /> INTERACTIVE 3D PREVIEW
-        </div>
         {printProgress ? (
           <div className="print-animation-label" role="status">
-            <b>Test print · {printProgress.percent}%</b>
+            <b>Test print {printProgress.percent}%</b>
             <span>
               Layer {printProgress.layer} of {printProgress.layers}
               {printProgress.falling ? " · Floating parts are falling" : ""}
@@ -449,7 +446,7 @@ export const Viewer = forwardRef<
                   onClick={toggleSupports}
                 >
                   <i className="support-key" />
-                  {supportShown ? "Hide supports" : "Simulate supports"}
+                  {supportShown ? "Hide supports" : "Show supports"}
                 </button>
               )}
               {supportShown && analysis.supportContacts.length > 0 && (
@@ -458,7 +455,7 @@ export const Viewer = forwardRef<
               {analysis.problemEdges.length > 0 && (
                 <span>
                   <i className="floating-key" />
-                  Open or shared edges
+                  Holes or open edges
                 </span>
               )}
             </div>
@@ -470,25 +467,22 @@ export const Viewer = forwardRef<
           </div>
         )}
         <div className="viewer-bottom">
-          <span>
-            <Move size={13} /> Grid: 10 mm · Drag to rotate · scroll to zoom
-          </span>
+          <span>Drag to rotate · Scroll to zoom · Grid squares are 10 mm</span>
           <div className="viewer-tools">
             <button
               type="button"
               className="viewer-home"
               onClick={() => runtime.current?.reset()}
               title="Return to the starting view"
-              aria-label="Home view"
             >
-              <Home size={15} /> Home view
+              <Home size={16} /> Reset view
             </button>
             <button
               type="button"
               onClick={() => setWireframe(!wireframe)}
               aria-pressed={wireframe}
-              title="Wireframe"
-              aria-label="Toggle wireframe"
+              title="Show wireframe"
+              aria-label="Show wireframe"
             >
               <Box size={17} />
             </button>

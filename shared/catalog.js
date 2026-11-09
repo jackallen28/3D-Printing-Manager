@@ -26,3 +26,16 @@ export const MAX_BYTES = 50 * 1024 * 1024;
 export const APP_TAG = 'bnts-print-studio-v1';
 export const ADVANCED_FILAMENT = 'Advanced filament — request only';
 export const ADVANCED_HEX = '#9c55d8';
+
+// Stored values above are part of saved submissions and validation, so they stay unchanged.
+// These are the plain labels people see on screen.
+const DISPLAY_LABELS = {
+  [ADVANCED_FILAMENT]: 'Special filament (on request)',
+  'Custom — see note': 'Other (explain in notes)',
+  Custom: 'Other colour',
+  'Let staff decide': 'Let my teacher decide',
+  'Draft / quick print': 'Draft (faster)',
+};
+export const displayLabel = (value) => DISPLAY_LABELS[value] || value;
+// Teachers read the same values from the student's side, so "Let staff decide" reads as no preference.
+export const staffLabel = (value) => (value === 'Let staff decide' ? 'No preference' : displayLabel(value));

@@ -22,19 +22,19 @@ test("STL test preview highlights detached text, animates a fall and gives short
   await expect(page.getByRole("button", { name: "Highlight floating parts" })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Test print", exact: true }).click();
   await expect(page.locator(".viewer")).toHaveAttribute("data-print-test-phase", "printing");
-  await expect(page.getByRole("button", { name: "Confirm my model" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
   await expect(page.locator(".viewer")).toHaveAttribute("data-print-test-phase", "falling", { timeout: 12000 });
   await expect(page.locator(".print-animation-label")).toContainText("Floating parts are falling");
   await page.screenshot({ path: "test-results/test-print-floating.png", fullPage: true });
-  await expect(page.getByText("Your print may fail.", { exact: true })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Your print may fail", { exact: true })).toBeVisible({ timeout: 10000 });
   const advice = page.locator(".print-test-result li");
   expect(await advice.count()).toBeLessThanOrEqual(3);
   await expect(page.locator(".print-test-result")).toContainText("Move floating parts");
   await expect(page.locator(".print-test-result")).toContainText("Ask your teacher");
   await page.getByRole("button", { name: "Test print", exact: true }).click();
-  await page.getByRole("button", { name: "Stop preview" }).click();
+  await page.getByRole("button", { name: "Stop" }).click();
   await expect(page.locator(".viewer")).toHaveAttribute("data-print-test-phase", "idle");
-  await expect(page.getByText("Your print may fail.", { exact: true })).not.toBeVisible();
+  await expect(page.getByText("Your print may fail", { exact: true })).not.toBeVisible();
   expect(errors).toEqual([]);
 });
 

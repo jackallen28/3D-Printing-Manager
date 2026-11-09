@@ -1,128 +1,1309 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Upload, Check, CheckCircle2, FileBox, X, ShieldCheck, Layers3, Palette, Sparkles, AlertTriangle, ExternalLink, RotateCcw, Play, Square, Info } from 'lucide-react';
-import { api, upload, setUploadMode } from './lib/api';
-import { loadModel, splitModelParts, areaName, type LoadedModel } from './lib/model';
-import { Viewer, type ViewerHandle } from './components/Viewer';
-import { ErrorMessage, Loading, bytesLabel, dateLabel } from './components/Layout';
-import ColourEditor from './components/ColourEditor';
-import PrintPreferences,{printOptions,type FilePrintOptions} from './components/PrintPreferences';
-import {splitGroups,splitIntoFiles} from '../shared/split-files.js';
-import ViewAtHome from './components/ViewAtHome';
-import { dimensionWarnings } from '../shared/geometry.js';
-import {thinFeatures} from '../shared/thickness.js';
-import {printTestResult} from '../shared/print-test.js';
-import { scaleLabel } from '../shared/printing.js';
-import { PREFERENCES, ADVANCED_FILAMENT, ADVANCED_HEX } from '../shared/catalog.js';
-import type { Analysis, Config, Details } from './types';
-import AnalysisWorker from './lib/analysis.worker?worker&inline';
-import { fileFormat, enabledFormats } from '../shared/formats.js';
-import { extractCadArchive } from '../shared/archives.js';
-import { filePreview } from './lib/file-preview';
-const freshDetails = ():Details=>({requestId:crypto.randomUUID(),firstName:'',schoolId:'',staffId:'',classId:'',classCode:'',classroom:'',scalePercent:100,dimensionsMm:null,advancedFilamentNote:'',colour:'',customColour:'',colourMapping:[],size:'Original size',supports:'Let staff decide',printer:'Let staff decide',quality:'Standard',copies:1,notes:'',designLink:'',readyConfirmed:false,detailsConfirmed:false});
-type PreparedPrint={file:File;preview:Blob;requestId:string;preferences:Pick<Details,'colour'|'customColour'|'colourMapping'|'advancedFilamentNote'|'scalePercent'|'dimensionsMm'>&{printOptions?:FilePrintOptions}};
-const steps=['Upload','Check your model','Your details','Review and submit'];
-export default function Student(){
- const [config,setConfig]=useState<Config|null>(null),[configError,setConfigError]=useState('');
- const [step,setStep]=useState(0),[file,setFile]=useState<File|null>(null),[model,setModel]=useState<LoadedModel|null>(null),[analysis,setAnalysis]=useState<Analysis|undefined>(),[details,setDetails]=useState<Details>(freshDetails);
- const [error,setError]=useState(''),[busy,setBusy]=useState(false),[analysing,setAnalysing]=useState(false),[drag,setDrag]=useState(false),[progress,setProgress]=useState(0),[receipt,setReceipt]=useState<any>(null),[preview,setPreview]=useState<Blob|null>(null);
- const [archiveQueue,setArchiveQueue]=useState<File[]>([]),[archiveName,setArchiveName]=useState(''),[archiveTotal,setArchiveTotal]=useState(1),[preparedFiles,setPreparedFiles]=useState<PreparedPrint[]>([]);
- const [splitDismissed,setSplitDismissed]=useState(false);const splitDefaults=useRef(new WeakMap<File,Partial<Details>>());useEffect(()=>setSplitDismissed(false),[file]);
- const [selectedPart,setSelectedPart]=useState('');const [showSupports,setShowSupports]=useState(false);
- useEffect(()=>setShowSupports(false),[file,model]);
- const [printTest,setPrintTest]=useState<ReturnType<typeof printTestResult>|'running'|null>(null);const printTestToken=useRef(0);
- const input=useRef<HTMLInputElement>(null),viewer=useRef<ViewerHandle>(null),worker=useRef<Worker|null>(null),heading=useRef<HTMLHeadingElement>(null);
- useEffect(()=>{printTestToken.current++;viewer.current?.stopTestPrint();setPrintTest(null);},[file,model,details.scalePercent,details.colourMapping]);
- const getConfig=()=>{setConfigError('');api<Config>('/config').then(value=>{setUploadMode(value.uploadMode);setConfig(value);}).catch(e=>setConfigError(e.message));};
- useEffect(()=>{getConfig();return()=>worker.current?.terminate();},[]);
- useEffect(()=>{if(step) {window.scrollTo({top:0,behavior:'smooth'});heading.current?.focus();}},[step]);
- const update=(patch:Partial<Details>)=>setDetails(d=>({...d,...patch,detailsConfirmed:false}));
- const choose=async(f?:File,fromArchive=false)=>{
-  if(!f)return;setError('');
-  if(!config?.acceptedExtensions.includes(f.name.split('.').at(-1)!.toLowerCase())){setError('This file type is not enabled. Choose one of the listed formats.');return;}
-  if(f.size>(config?.maxBytes||50*1024*1024)||!f.size){setError(`Choose a non-empty file up to ${(config?.maxBytes||50*1024*1024)/1024/1024} MB.`);return;}
-  setBusy(true);worker.current?.terminate();setAnalysis(undefined);setAnalysing(true);
-  try{
-   if(/\.zip$/i.test(f.name)){const extracted=extractCadArchive(await f.arrayBuffer(),config!.acceptedExtensions).map(entry=>new File([new Uint8Array(entry.bytes)],entry.name,{type:'application/octet-stream'}));setArchiveName(f.name);setArchiveTotal(extracted.length);setArchiveQueue(extracted.slice(1));setPreparedFiles([]);await choose(extracted[0],true);return;}
-   if(!fromArchive){setArchiveName('');setArchiveQueue([]);setArchiveTotal(1);setPreparedFiles([]);}
-   window.scrollTo({top:0,behavior:'smooth'});
-   if(!fileFormat(f.name)?.preview){setFile(f);setModel(null);setPreview(await filePreview(f));setDetails({...freshDetails(),colour:config?.colours[0]?.name||'Custom',colourMapping:[{source:'#19c1ca',target:config?.colours[0]?.name||'Custom'}]});setAnalysing(false);setStep(1);return;}
-   const loaded=await loadModel(f),defaults=splitDefaults.current.get(f);const initialMapping=loaded.palette.map(source=>({source,target:defaults?.colourMapping?.find(m=>m.source===source)?.target||(loaded.parts||loaded.palette.length===1?config?.colours[0]?.name||'Custom':closestColour(source,config!))}));setFile(f);setModel(loaded);setSelectedPart(loaded.palette[0]);setPreview(null);setDetails(previous=>({...freshDetails(),...(fromArchive?{firstName:previous.firstName,schoolId:previous.schoolId,staffId:previous.staffId,classId:previous.classId,classCode:previous.classCode,classroom:previous.classroom}:{}),...defaults,colour:initialMapping[0]?.target||'Custom',colourMapping:initialMapping}));setStep(1);
-   const w=new AnalysisWorker();worker.current=w;
-   w.onmessage=e=>{if(e.data.error)setError(e.data.error);else{setAnalysis(e.data.result);const split=splitModelParts(loaded,e.data.result.triangleParts,e.data.result.components);if(split!==loaded){setModel(split);setSelectedPart(split.palette[0]);}setDetails(d=>{const colours=split!==loaded?split.palette.map(source=>({source,target:d.colour})):d.colourMapping;return {...d,colourMapping:colours.map((entry,i)=>({...entry,partName:areaName(split,entry.source,i,e.data.result.components===1&&colours.length>1).slice(0,80)})),readyConfirmed:false};});}setAnalysing(false);w.terminate();};
-   w.onerror=()=>{setError('The model checks could not finish. Try a smaller export.');setAnalysing(false);w.terminate();};
-   const data=loaded.positions.slice();w.postMessage({positions:data,format:loaded.format},[data.buffer]);
-  }catch(e){if(fromArchive){setStep(0);setFile(null);setModel(null);setArchiveQueue([]);setPreparedFiles([]);setArchiveName('');setArchiveTotal(1);}const message=e instanceof Error?e.message:'The model could not be opened.';setError(fromArchive?f.name+': '+message+' Remove this file from the ZIP and try again.':message);setAnalysing(false);}finally{setBusy(false);if(input.current)input.current.value='';}
- };
- const targetHex=(name:string)=>name===ADVANCED_FILAMENT?ADVANCED_HEX:config?.colours.find(c=>c.name===name)?.hex||'#cfc2e0';
- const mapping=Object.fromEntries(details.colourMapping.map(m=>[m.source,targetHex(m.target)]));
- const colourNames=[...new Set(details.colourMapping.map(m=>m.target))];
- const advancedSources=details.colourMapping.filter(m=>m.target===ADVANCED_FILAMENT).map(m=>m.source);
- const needsAdvanced=details.colour===ADVANCED_FILAMENT||advancedSources.length>0;
- const dimensionsMm=analysis?.dimensions.map(v=>v*details.scalePercent/100)||null;
- const scaledAnalysis=analysis?{...analysis,dimensions:dimensionsMm!,warnings:[...analysis.warnings.filter(w=>!['size','thin','units','thin-features'].includes(w.code)),...dimensionWarnings(dimensionsMm!),...(model?.format==='obj'?[]:thinFeatures(analysis.thicknessSamples,analysis.partBounds,analysis.triangleParts,details.scalePercent).warnings)]}:undefined;
- const needsCustom=details.colour==='Custom'||details.colourMapping.some(m=>m.target==='Custom');
- const sections=analysis?.components===1&&details.colourMapping.length>1;
- const objects=model&&analysis?splitGroups(model,analysis):[];
- const convertObjects=async()=>{
-  if(!file||!model||!analysis)return;setError('');setBusy(true);
-  try{
-   const files=splitIntoFiles(file,model,analysis);if(archiveTotal+files.length-1>20)throw new Error('Review up to 20 files at a time. Split this file into smaller groups in your CAD program.');
-   for(const [index,output]of files.entries()){
-    const sources=new Set<string>();for(const triangle of objects[index].triangles)for(let vertex=0;vertex<3;vertex++)sources.add(model.palette[model.colourIndices[triangle*3+vertex]]);
-    const colours=details.colourMapping.filter(entry=>sources.has(entry.source)),target=colours[0]?.target||details.colour;
-    const colourMapping=model.format==='stl'?[{source:'#19c1ca',target}]:colours;
-    splitDefaults.current.set(output,{scalePercent:details.scalePercent,colourMapping,advancedFilamentNote:colourMapping.some(entry=>entry.target===ADVANCED_FILAMENT)?details.advancedFilamentNote:'',customColour:colourMapping.some(entry=>entry.target==='Custom')?details.customColour:'',...printOptions(details)});
-   }
-   setArchiveName(archiveName||file.name);setArchiveTotal(total=>total+files.length-1);setArchiveQueue(queue=>[...files.slice(1),...queue]);await choose(files[0],true);
-  }catch(error){setError((error as Error).message);}finally{setBusy(false);}
- };
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Upload,
+  Check,
+  CheckCircle2,
+  FileBox,
+  X,
+  ShieldCheck,
+  Layers3,
+  Palette,
+  Sparkles,
+  AlertTriangle,
+  ExternalLink,
+  RotateCcw,
+  Play,
+  Square,
+  Info,
+} from "lucide-react";
+import { api, upload, setUploadMode } from "./lib/api";
+import { loadModel, splitModelParts, areaName, type LoadedModel } from "./lib/model";
+import { Viewer, type ViewerHandle } from "./components/Viewer";
+import { ErrorMessage, Loading, bytesLabel, dateLabel } from "./components/Layout";
+import ColourEditor from "./components/ColourEditor";
+import PrintPreferences, { printOptions, type FilePrintOptions } from "./components/PrintPreferences";
+import { splitGroups, splitIntoFiles } from "../shared/split-files.js";
+import ViewAtHome from "./components/ViewAtHome";
+import { dimensionWarnings } from "../shared/geometry.js";
+import { thinFeatures } from "../shared/thickness.js";
+import { printTestResult } from "../shared/print-test.js";
+import { scaleLabel } from "../shared/printing.js";
+import { PREFERENCES, ADVANCED_FILAMENT, ADVANCED_HEX } from "../shared/catalog.js";
+import type { Analysis, Config, Details } from "./types";
+import AnalysisWorker from "./lib/analysis.worker?worker&inline";
+import { fileFormat, enabledFormats } from "../shared/formats.js";
+import { extractCadArchive } from "../shared/archives.js";
+import { filePreview } from "./lib/file-preview";
+const freshDetails = (): Details => ({
+  requestId: crypto.randomUUID(),
+  firstName: "",
+  schoolId: "",
+  staffId: "",
+  classId: "",
+  classCode: "",
+  classroom: "",
+  scalePercent: 100,
+  dimensionsMm: null,
+  advancedFilamentNote: "",
+  colour: "",
+  customColour: "",
+  colourMapping: [],
+  size: "Original size",
+  supports: "Let staff decide",
+  printer: "Let staff decide",
+  quality: "Standard",
+  copies: 1,
+  notes: "",
+  designLink: "",
+  readyConfirmed: false,
+  detailsConfirmed: false,
+});
+type PreparedPrint = {
+  file: File;
+  preview: Blob;
+  requestId: string;
+  preferences: Pick<
+    Details,
+    "colour" | "customColour" | "colourMapping" | "advancedFilamentNote" | "scalePercent" | "dimensionsMm"
+  > & { printOptions?: FilePrintOptions };
+};
+const steps = ["Upload", "Check your model", "Your details", "Review and submit"];
+export default function Student() {
+  const [config, setConfig] = useState<Config | null>(null),
+    [configError, setConfigError] = useState("");
+  const [step, setStep] = useState(0),
+    [file, setFile] = useState<File | null>(null),
+    [model, setModel] = useState<LoadedModel | null>(null),
+    [analysis, setAnalysis] = useState<Analysis | undefined>(),
+    [details, setDetails] = useState<Details>(freshDetails);
+  const [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [analysing, setAnalysing] = useState(false),
+    [drag, setDrag] = useState(false),
+    [progress, setProgress] = useState(0),
+    [receipt, setReceipt] = useState<any>(null),
+    [preview, setPreview] = useState<Blob | null>(null);
+  const [archiveQueue, setArchiveQueue] = useState<File[]>([]),
+    [archiveName, setArchiveName] = useState(""),
+    [archiveTotal, setArchiveTotal] = useState(1),
+    [preparedFiles, setPreparedFiles] = useState<PreparedPrint[]>([]);
+  const [splitDismissed, setSplitDismissed] = useState(false);
+  const splitDefaults = useRef(new WeakMap<File, Partial<Details>>());
+  useEffect(() => setSplitDismissed(false), [file]);
+  const [selectedPart, setSelectedPart] = useState("");
+  const [showSupports, setShowSupports] = useState(false);
+  useEffect(() => setShowSupports(false), [file, model]);
+  const [printTest, setPrintTest] = useState<ReturnType<typeof printTestResult> | "running" | null>(null);
+  const printTestToken = useRef(0);
+  const input = useRef<HTMLInputElement>(null),
+    viewer = useRef<ViewerHandle>(null),
+    worker = useRef<Worker | null>(null),
+    heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    printTestToken.current++;
+    viewer.current?.stopTestPrint();
+    setPrintTest(null);
+  }, [file, model, details.scalePercent, details.colourMapping]);
+  const getConfig = () => {
+    setConfigError("");
+    api<Config>("/config")
+      .then((value) => {
+        setUploadMode(value.uploadMode);
+        setConfig(value);
+      })
+      .catch((e) => setConfigError(e.message));
+  };
+  useEffect(() => {
+    getConfig();
+    return () => worker.current?.terminate();
+  }, []);
+  useEffect(() => {
+    if (step) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      heading.current?.focus();
+    }
+  }, [step]);
+  const update = (patch: Partial<Details>) => setDetails((d) => ({ ...d, ...patch, detailsConfirmed: false }));
+  const choose = async (f?: File, fromArchive = false) => {
+    if (!f) return;
+    setError("");
+    if (!config?.acceptedExtensions.includes(f.name.split(".").at(-1)!.toLowerCase())) {
+      setError("This file type is not enabled. Choose one of the listed formats.");
+      return;
+    }
+    if (f.size > (config?.maxBytes || 50 * 1024 * 1024) || !f.size) {
+      setError(`Choose a non-empty file up to ${(config?.maxBytes || 50 * 1024 * 1024) / 1024 / 1024} MB.`);
+      return;
+    }
+    setBusy(true);
+    worker.current?.terminate();
+    setAnalysis(undefined);
+    setAnalysing(true);
+    try {
+      if (/\.zip$/i.test(f.name)) {
+        const extracted = extractCadArchive(await f.arrayBuffer(), config!.acceptedExtensions).map(
+          (entry) => new File([new Uint8Array(entry.bytes)], entry.name, { type: "application/octet-stream" }),
+        );
+        setArchiveName(f.name);
+        setArchiveTotal(extracted.length);
+        setArchiveQueue(extracted.slice(1));
+        setPreparedFiles([]);
+        await choose(extracted[0], true);
+        return;
+      }
+      if (!fromArchive) {
+        setArchiveName("");
+        setArchiveQueue([]);
+        setArchiveTotal(1);
+        setPreparedFiles([]);
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      if (!fileFormat(f.name)?.preview) {
+        setFile(f);
+        setModel(null);
+        setPreview(await filePreview(f));
+        setDetails({
+          ...freshDetails(),
+          colour: config?.colours[0]?.name || "Custom",
+          colourMapping: [{ source: "#19c1ca", target: config?.colours[0]?.name || "Custom" }],
+        });
+        setAnalysing(false);
+        setStep(1);
+        return;
+      }
+      const loaded = await loadModel(f),
+        defaults = splitDefaults.current.get(f);
+      const initialMapping = loaded.palette.map((source) => ({
+        source,
+        target:
+          defaults?.colourMapping?.find((m) => m.source === source)?.target ||
+          (loaded.parts || loaded.palette.length === 1
+            ? config?.colours[0]?.name || "Custom"
+            : closestColour(source, config!)),
+      }));
+      setFile(f);
+      setModel(loaded);
+      setSelectedPart(loaded.palette[0]);
+      setPreview(null);
+      setDetails((previous) => ({
+        ...freshDetails(),
+        ...(fromArchive
+          ? {
+              firstName: previous.firstName,
+              schoolId: previous.schoolId,
+              staffId: previous.staffId,
+              classId: previous.classId,
+              classCode: previous.classCode,
+              classroom: previous.classroom,
+            }
+          : {}),
+        ...defaults,
+        colour: initialMapping[0]?.target || "Custom",
+        colourMapping: initialMapping,
+      }));
+      setStep(1);
+      const w = new AnalysisWorker();
+      worker.current = w;
+      w.onmessage = (e) => {
+        if (e.data.error) setError(e.data.error);
+        else {
+          setAnalysis(e.data.result);
+          const split = splitModelParts(loaded, e.data.result.triangleParts, e.data.result.components);
+          if (split !== loaded) {
+            setModel(split);
+            setSelectedPart(split.palette[0]);
+          }
+          setDetails((d) => {
+            const colours =
+              split !== loaded ? split.palette.map((source) => ({ source, target: d.colour })) : d.colourMapping;
+            return {
+              ...d,
+              colourMapping: colours.map((entry, i) => ({
+                ...entry,
+                partName: areaName(split, entry.source, i, e.data.result.components === 1 && colours.length > 1).slice(
+                  0,
+                  80,
+                ),
+              })),
+              readyConfirmed: false,
+            };
+          });
+        }
+        setAnalysing(false);
+        w.terminate();
+      };
+      w.onerror = () => {
+        setError("The model checks could not finish. Try a smaller export.");
+        setAnalysing(false);
+        w.terminate();
+      };
+      const data = loaded.positions.slice();
+      w.postMessage({ positions: data, format: loaded.format }, [data.buffer]);
+    } catch (e) {
+      if (fromArchive) {
+        setStep(0);
+        setFile(null);
+        setModel(null);
+        setArchiveQueue([]);
+        setPreparedFiles([]);
+        setArchiveName("");
+        setArchiveTotal(1);
+      }
+      const message = e instanceof Error ? e.message : "The model could not be opened.";
+      setError(fromArchive ? f.name + ": " + message + " Remove this file from the ZIP and try again." : message);
+      setAnalysing(false);
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
+  };
+  const targetHex = (name: string) =>
+    name === ADVANCED_FILAMENT ? ADVANCED_HEX : config?.colours.find((c) => c.name === name)?.hex || "#cfc2e0";
+  const mapping = Object.fromEntries(details.colourMapping.map((m) => [m.source, targetHex(m.target)]));
+  const colourNames = [...new Set(details.colourMapping.map((m) => m.target))];
+  const advancedSources = details.colourMapping.filter((m) => m.target === ADVANCED_FILAMENT).map((m) => m.source);
+  const needsAdvanced = details.colour === ADVANCED_FILAMENT || advancedSources.length > 0;
+  const dimensionsMm = analysis?.dimensions.map((v) => (v * details.scalePercent) / 100) || null;
+  const scaledAnalysis = analysis
+    ? {
+        ...analysis,
+        dimensions: dimensionsMm!,
+        warnings: [
+          ...analysis.warnings.filter((w) => !["size", "thin", "units", "thin-features"].includes(w.code)),
+          ...dimensionWarnings(dimensionsMm!),
+          ...(model?.format === "obj"
+            ? []
+            : thinFeatures(analysis.thicknessSamples, analysis.partBounds, analysis.triangleParts, details.scalePercent)
+                .warnings),
+        ],
+      }
+    : undefined;
+  const needsCustom = details.colour === "Custom" || details.colourMapping.some((m) => m.target === "Custom");
+  const sections = analysis?.components === 1 && details.colourMapping.length > 1;
+  const objects = model && analysis ? splitGroups(model, analysis) : [];
+  const convertObjects = async () => {
+    if (!file || !model || !analysis) return;
+    setError("");
+    setBusy(true);
+    try {
+      const files = splitIntoFiles(file, model, analysis);
+      if (archiveTotal + files.length - 1 > 20)
+        throw new Error("Review up to 20 files at a time. Split this file into smaller groups in your CAD program.");
+      for (const [index, output] of files.entries()) {
+        const sources = new Set<string>();
+        for (const triangle of objects[index].triangles)
+          for (let vertex = 0; vertex < 3; vertex++)
+            sources.add(model.palette[model.colourIndices[triangle * 3 + vertex]]);
+        const colours = details.colourMapping.filter((entry) => sources.has(entry.source)),
+          target = colours[0]?.target || details.colour;
+        const colourMapping = model.format === "stl" ? [{ source: "#19c1ca", target }] : colours;
+        splitDefaults.current.set(output, {
+          scalePercent: details.scalePercent,
+          colourMapping,
+          advancedFilamentNote: colourMapping.some((entry) => entry.target === ADVANCED_FILAMENT)
+            ? details.advancedFilamentNote
+            : "",
+          customColour: colourMapping.some((entry) => entry.target === "Custom") ? details.customColour : "",
+          ...printOptions(details),
+        });
+      }
+      setArchiveName(archiveName || file.name);
+      setArchiveTotal((total) => total + files.length - 1);
+      setArchiveQueue((queue) => [...files.slice(1), ...queue]);
+      await choose(files[0], true);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
- const testPrint=async()=>{if(!analysis)return;const token=++printTestToken.current;setPrintTest('running');update({readyConfirmed:false});setError('');try{const finished=await viewer.current!.testPrint();if(token===printTestToken.current)setPrintTest(finished?printTestResult(analysis,scaledAnalysis!.warnings):null);}catch(error){if(token===printTestToken.current){setPrintTest(null);setError((error as Error).message);}}};
- const stopPrintTest=()=>{printTestToken.current++;viewer.current?.stopTestPrint();setPrintTest(null);};
- const confirmModel=async()=>{setError('');setBusy(true);try{if(printTest==='running')throw new Error('Finish the test preview before confirming.');if(model&&!analysis)throw new Error('Wait for the model checks to finish.');if(!details.readyConfirmed)throw new Error('Confirm that you have checked your model.');if(needsAdvanced&&!details.advancedFilamentNote.trim())throw new Error('Describe the advanced filament you need.');if(needsCustom&&!details.customColour.trim())throw new Error('Describe the custom colour you would like.');if(archiveTotal>1&&[details.supports,details.printer,details.quality].some(value=>value.startsWith('Custom'))&&!details.notes.trim())throw new Error('Add a note explaining your custom preferences for this file.');if(archiveTotal>1&&details.designLink){let valid=false;try{const link=new URL(details.designLink);valid=link.protocol==='https:'&&!link.username&&!link.password;}catch{}if(!valid)throw new Error('Use a shareable https design link.');}const blob=model?await viewer.current!.snapshot():preview;if(!blob||!file)throw new Error('The preview is not ready.');setPreview(blob);const prepared:PreparedPrint={file,preview:blob,requestId:details.requestId,preferences:{colour:details.colourMapping[0]?.target||details.colour,customColour:details.customColour,colourMapping:details.colourMapping,advancedFilamentNote:details.advancedFilamentNote,scalePercent:details.scalePercent,dimensionsMm,printOptions:archiveTotal>1?printOptions(details):undefined}};setPreparedFiles(previous=>[...previous.filter(p=>p.file!==file),prepared]);if(archiveQueue.length){const[next,...rest]=archiveQueue;setArchiveQueue(rest);await choose(next,true);}else setStep(2);}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
- const submit=async()=>{
-  if(!preparedFiles.length)return;setError('');setBusy(true);setProgress(0);const results=[];
-  try{for(let i=0;i<preparedFiles.length;i++){const prepared=preparedFiles[i];const {printOptions:options,...preferences}=prepared.preferences;const form=new FormData();form.append('model',prepared.file);form.append('preview',prepared.preview,'preview.png');form.append('details',JSON.stringify({...details,...preferences,...options,requestId:prepared.requestId,size:scaleLabel(prepared.preferences.scalePercent),readyConfirmed:true,detailsConfirmed:true}));const result=await upload(form,value=>setProgress(Math.round((i+value/100)/preparedFiles.length*100)));results.push({...result,originalName:prepared.file.name});}setReceipt({...results.at(-1),count:results.length,files:results});setStep(4);}catch(e){setError((e as Error).message);}finally{setBusy(false);}
- };
- const reset=()=>{worker.current?.terminate();splitDefaults.current=new WeakMap();setStep(0);setModel(null);setFile(null);setReceipt(null);setError('');setAnalysis(undefined);setPreview(null);setDetails(freshDetails());setArchiveQueue([]);setArchiveName('');setArchiveTotal(1);setPreparedFiles([]);getConfig();};
- if(!config&&!configError)return <Loading/>;
- if(configError)return <section className="narrow panel connection-error"><h1>Connection unavailable</h1><ErrorMessage message={configError}/><button className="button primary" onClick={getConfig}><RotateCcw size={16}/> Try again</button></section>;
- if(!config)return null;
- return <div className={'student '+(step===0?'landing':'workflow')}>
-  {config.localDemo&&<div className="demo-banner">Development demo · Files stay on this machine, not Google Drive.</div>}
-  {step===0?<>
-   <section className="hero"><div className="hero-art" aria-hidden="true"><div className="floating-cube"><svg viewBox="0 0 120 120" fill="none"><path d="m60 8 45 26v52L60 112 15 86V34z" fill="#19c1ca" fillOpacity=".08" stroke="#76e4df" strokeWidth="1.2"/><path d="m15 34 45 26 45-26M60 60v52M60 8v52M15 86l45-26 45 26" stroke="#76e4df" strokeOpacity=".4"/><path d="m60 21 33 19-33 19-33-19z" fill="#19c1ca" fillOpacity=".16"/><path d="m27 47 33 19v32L27 79z" fill="#19c1ca" fillOpacity=".12"/><path d="m93 47-33 19v32l33-19z" fill="#b7a2d3" fillOpacity=".25"/></svg></div><span className="orbit orbit-one"/><span className="orbit orbit-two"/></div>
-    <h1>UPLOAD YOUR<br/><span>3D PRINTING FILES</span></h1><p className="hero-description">Upload your file for the BNTS printing team.</p>
-    <div className={'drop-zone '+(drag?'dragging':'')+(!config.acceptingUploads?' unavailable':'')} onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);if(config.acceptingUploads&&!busy) {if(e.dataTransfer.files.length>1)setError('Upload one design at a time.');else choose(e.dataTransfer.files[0]);}}}>
-     <div className="upload-icon"><Upload size={27} strokeWidth={1.5}/></div><h2>{busy?'Opening your file…':drag?'Release to select your file':'Drop your file here'}</h2><p>or choose a file from your computer</p><input ref={input} type="file" accept={config.acceptedExtensions.map(e=>'.'+e).join(',')} aria-label="Upload a 3D printing file" className="visually-hidden" onChange={e=>choose(e.target.files?.[0])}/><button className="button primary upload-button" disabled={busy||!config.acceptingUploads} onClick={()=>input.current?.click()}>{busy?<span className="spinner"/>:<FileBox size={18}/>} Choose a file <ArrowRight size={17}/></button><div className="file-types"><span>STL</span><span>OBJ</span><span>STEP</span><span>3MF</span><span>ZIP</span>{config.acceptedExtensions.some(e=>!['stl','obj','step','stp','3mf','zip'].includes(e))&&<span>+ more</span>}<i/>Up to {config.maxBytes/1024/1024} MB per file</div>
-    </div><ErrorMessage message={error}/>{!config.acceptingUploads&&<p className="setup-notice">The printing team is setting things up. Please check back shortly.</p>}
-    <p className="privacy-line"><ShieldCheck size={14}/> No student account needed. Files are automatically deleted after 14 days.</p>
-   </section>
-   <section className="how-it-works" aria-label="How it works">{[{icon:Upload,title:'Upload a file',text:'Choose a supported file from your computer.'},{icon:Layers3,title:'Check your model',text:'View your file in 3D and check for issues.'},{icon:Palette,title:'Choose print options',text:'Choose colours and add your details.'}].map((item,i)=><div className="how-item" key={item.title}><span className="how-icon"><item.icon size={20} strokeWidth={1.5}/></span><div><h3><span>0{i+1}</span>{item.title}</h3><p>{item.text}</p></div></div>)}</section>
-  </>:step===4?<section className="success-screen narrow"><div className="success-icon"><Check size={40}/></div><p className="eyebrow">UPLOAD COMPLETE</p><h1>File <span>submitted.</span></h1><p>Thanks, {receipt.firstName}. The BNTS printing team has your file.<br/>Staff will check it before printing.</p><div className="panel receipt"><FileBox size={26}/><div><strong>Print request received</strong><p className="filename">{receipt.count>1?receipt.count+' CAD files':file?.name}</p><span>Reference {receipt.id.slice(0,8).toUpperCase()} · Kept until {dateLabel(receipt.expiresAt)}</span></div><CheckCircle2 size={22}/></div><button className="button primary" onClick={reset}>Upload another file <ArrowRight size={17}/></button></section>:<>
-   <nav className="stepper" aria-label="Upload progress">{steps.map((name,i)=><div className={step===i?'current':step>i?'done':''} key={name} aria-current={step===i?'step':undefined}><span>{step>i?<Check size={14}/>:i+1}</span><b>{name}</b>{i<3&&<i/>}</div>)}</nav>
-   <div className="workflow-heading"><p className="eyebrow">STEP {String(step+1).padStart(2,'0')} / 04</p><h1 ref={heading} tabIndex={-1}>{step===1?<>Check your <span>3D model.</span></>:step===2?<>Your <span>details.</span></>:<>Review <span>your request.</span></>}</h1><p>{step===1?'Rotate your model, check for issues, and choose your colours.':step===2?'Add your first name, school and print preferences.':'Check your details before sending your file.'}</p></div>
-   {archiveName&&<p className="archive-notice">From {archiveName} · Review file {archiveTotal-archiveQueue.length} of {archiveTotal}. Only supported CAD files will be submitted.</p>}{file&&<div className="file-bar"><FileBox size={19}/><strong>{file.name}</strong><span>{bytesLabel(file.size)}</span><button className="text-button" onClick={reset} disabled={busy}><X size={15}/> Change file</button></div>}
-   <ErrorMessage message={error}/>
-   {step===1&&file&&<>{objects.length>1&&!splitDismissed&&<section className="panel split-file-prompt" aria-label="Separate objects"><Info size={22}/><div><strong>This file contains {objects.length} objects.</strong><p>Would you like to convert them to separate files? You can choose print settings for each one.</p>{objects.length>20&&<p>Split this file into smaller groups in your CAD program to review up to 20 files at a time.</p>}<div><button className="button secondary" disabled={busy||analysing||printTest==='running'||objects.length>20} onClick={convertObjects}>Convert to separate files</button><button className="text-button" disabled={busy} onClick={()=>setSplitDismissed(true)}>Keep as one file</button></div></div></section>}<div className="preview-layout"><div className="preview-column"><>{model?<Viewer ref={viewer} model={model} analysis={analysis} mapping={mapping} scalePercent={details.scalePercent} advancedSources={advancedSources} onPartSelect={setSelectedPart} supportsVisible={showSupports} onSupportsChange={setShowSupports}/>:<UnsupportedPreview filename={file.name}/>}</><div className="dimension-bar">{analysis?<><span><b>{dimensionsMm!.map(d=>d.toFixed(1)).join(' × ')}</b> mm</span><span>{analysis.triangles.toLocaleString()} triangles</span></>:<span>{model?'Reading model dimensions…':'File will be uploaded in its original format.'}</span>}</div><p className="small muted">The original file is unchanged. Staff apply your saved scale and colour preferences before printing.</p>{model&&<section className="print-test-panel"><div className="print-test-actions"><button className="button secondary" disabled={analysing||!analysis||!analysis.complete||analysis.components>64||printTest==='running'} onClick={testPrint}><Play size={16}/> Test print</button>{printTest==='running'&&<button className="text-button" onClick={stopPrintTest}><Square size={14}/> Stop preview</button>}</div><p className="small muted">This preview estimates how layers build. Your teacher will check the final print.</p>{analysis&&(!analysis.complete||analysis.components>64)&&<p className="small muted">This model is too detailed for the test preview. Ask your teacher to check it.</p>}{printTest&&printTest!=='running'&&<div className={'print-test-result '+printTest.state} role="status"><strong>{printTest.title}</strong>{printTest.fixes.length>0?<ul>{printTest.fixes.map(fix=><li key={fix}>{fix}</li>)}</ul>:<p>Ask your teacher to check the model before printing.</p>}</div>}</section>}</div><aside className="panel checks-panel"><div className="section-label"><Sparkles size={17}/> Model checks</div>{analysing?<Loading/>:analysis?<><div className={'check-summary '+(scaledAnalysis!.warnings.length?'warning':'')}><span>{scaledAnalysis!.warnings.length?<AlertTriangle size={22}/>:<CheckCircle2 size={22}/>}</span><div><strong>{!analysis.complete?'Staff need to check this model':scaledAnalysis!.warnings.length?'Check these issues':model?.format==='obj'?'OBJ preview ready':'No common issues found'}</strong><small>{scaledAnalysis!.warnings.length?'Ask staff if you need help with a warning.':model?.format==='obj'?'Staff will check the final model before printing.':'No common mesh issues detected.'}</small></div></div><div className="checks-list">{scaledAnalysis!.warnings.map(w=><div className="check-warning" key={w.code}><AlertTriangle size={15}/><div><b>{w.title}</b><p>{w.detail}</p></div></div>)}{!scaledAnalysis!.warnings.length&&(model?.format==='obj'?<><div><Check size={16}/> Preview loaded</div><div><Check size={16}/> Dimensions shown in mm</div></>:<><div><Check size={16}/> {sections?'Joined sections checked':'Connected parts checked'}</div><div><Check size={16}/> No open mesh edges found</div><div><Check size={16}/> Model size checked</div></>)}{analysis.notices.map(n=>n.code==='supports'?<button type="button" className="check-support-card" key={n.code} aria-pressed={showSupports} disabled={printTest==='running'} onClick={()=>setShowSupports(value=>!value)}><Info size={17}/><span><strong>{n.title}</strong><small>{n.detail}</small><em>{showSupports?'Hide supports':'Simulate supports'}</em></span></button>:<div className="check-info" key={n.code}><CheckCircle2 size={15}/><div><b>{n.title}</b><p>{n.detail}</p></div></div>)}</div></>:<div className="notice">Model checks are not available for this file type. Check the file in your CAD program before continuing. Staff will check the original file before printing.</div>}
-    </aside></div>
-    <section className="panel scale-panel"><div className="section-label">Scale your model</div><p className="small muted">Adjust the scale to make your print smaller or larger. Dimensions are shown in mm.</p><div className="scale-controls"><input type="range" aria-label="Model scale slider" min={1} max={1000} step={1} value={details.scalePercent} onChange={e=>update({scalePercent:Number(e.target.value),readyConfirmed:false})}/><label className="field">Scale (%)<input type="number" min={1} max={1000} step={1} value={details.scalePercent} onChange={e=>{const v=Number(e.target.value);if(Number.isFinite(v))update({scalePercent:Math.min(1000,Math.max(1,v)),readyConfirmed:false});}}/></label><button className="text-button" onClick={()=>update({scalePercent:100,readyConfirmed:false})}>Reset to 100%</button></div><p className="scale-dimensions">{dimensionsMm?dimensionsMm.map(v=>v.toFixed(1)).join(' × ')+' mm':'Dimensions are unavailable for this file type.'}</p></section>
-    <ColourEditor key={file.name+file.size} model={model} sections={sections} mapping={details.colourMapping} colours={config.colours} customEnabled={config.customColourEnabled} selectedPart={selectedPart} onSelect={setSelectedPart} onMapping={value=>update({colourMapping:value.map((entry,i)=>({...entry,partName:areaName(model,entry.source,i,sections).slice(0,80)})),colour:value[0]?.target||details.colour,readyConfirmed:false})} customColour={details.customColour} advancedNote={details.advancedFilamentNote} onCustom={value=>update({customColour:value})} onAdvanced={value=>update({advancedFilamentNote:value})}/>
-    {archiveTotal>1&&<section className="panel details-panel"><div className="section-label">Print settings for this file</div><PrintPreferences value={details} onChange={update}/></section>}
-    <label className="checkbox-row confirmation"><input type="checkbox" checked={details.readyConfirmed} onChange={e=>update({readyConfirmed:e.target.checked})}/><span>I’ve checked my model and it’s ready for the printing team.<small>If a warning needs help, I’ll explain it in my notes.</small></span></label><div className="actions"><button className="text-button" onClick={reset}><ArrowLeft size={16}/> Back to upload</button><button className="button primary" disabled={busy||printTest==='running'||(!!model&&!analysis)||analysing||!details.readyConfirmed} onClick={confirmModel}>{archiveQueue.length?'Confirm and review next file':'Confirm my model'} <ArrowRight size={17}/></button></div>
-   </>}
-   {step===2&&<form onSubmit={async e=>{e.preventDefault();setError('');if(needsCustom&&!details.customColour.trim()){setError('Add your custom colour request.');return;}if([details.supports,details.printer,details.quality].some(x=>x.startsWith('Custom'))&&!details.notes.trim()){setError('Add a note explaining your custom preferences.');return;}setBusy(true);try{const result=await api('/classes/resolve',{method:'POST',body:JSON.stringify({schoolId:details.schoolId,classCode:details.classCode})});update({classId:result.classId,classroom:result.classroom});setStep(3);}catch(error){setError((error as Error).message);}finally{setBusy(false);}}}>
-    <section className="panel details-panel"><div className="section-label"><span className="section-number">01</span> Student details</div><div className="form-grid"><label className="field full">First name <em>*</em><input required maxLength={40} autoComplete="given-name" value={details.firstName} onChange={e=>update({firstName:e.target.value})} placeholder="Just your first name"/><small>No surname or email needed.</small></label><label className="field">School <em>*</em><select required value={details.schoolId} onChange={e=>update({schoolId:e.target.value,classId:'',classCode:'',classroom:''})}><option value="">Choose your school</option>{config.schools.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label><label className="field">BNTS staff member <em>*</em><select required value={details.staffId} onChange={e=>update({staffId:e.target.value})}><option value="">Choose a staff member</option>{config.staff.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></label><label className="field full">Class code <span className="optional">optional</span><input type="text" maxLength={80} autoComplete="off" value={details.classCode} onChange={e=>update({classCode:e.target.value,classId:'',classroom:''})} disabled={!details.schoolId} placeholder="Enter the code from your teacher"/><small>Leave this blank if you are not joining a class.</small></label></div></section>
-    <section className="panel details-panel"><div className="section-label"><span className="section-number">02</span> How would you like it printed?</div>{preparedFiles.length>1?<><p className="small muted">Each file has its own saved print settings.</p><ArchiveSummary prints={preparedFiles}/></>:<><div className="chosen-colours">{colourNames.map(name=><span key={name}><i className="swatch" style={{background:targetHex(name)}}/>{name==='Custom'?details.customColour:name}</span>)}<button type="button" className="text-button" onClick={()=>setStep(1)}>Change colours</button></div><PrintPreferences value={details} onChange={update}/></>}</section><div className="actions"><button type="button" className="text-button" onClick={()=>setStep(1)}><ArrowLeft size={16}/> Back to your model</button><button className="button primary" disabled={busy}>{busy?'Checking class code…':'Review my request'} <ArrowRight size={17}/></button></div>
-   </form>}
-   {step===3&&file&&<><div className="review-layout"><div><>{model?<Viewer model={model} mapping={mapping} scalePercent={details.scalePercent} advancedSources={advancedSources} compact/>:<UnsupportedPreview filename={file.name}/>}</><div className="review-privacy"><ShieldCheck size={20}/><p>The printing team can view your full request. Your model is also available through View at home. Files are deleted after 14 days.</p></div></div><section className="panel review-details">{preparedFiles.length>1&&<ArchiveSummary prints={preparedFiles}/>}<div className="section-label">Print details <button className="text-button" onClick={()=>setStep(2)} disabled={busy}>Edit details</button></div><dl><div><dt>First name</dt><dd>{details.firstName}</dd></div><div><dt>School</dt><dd>{config.schools.find(s=>s.id===details.schoolId)?.name}</dd></div>{details.classId&&<div><dt>Class</dt><dd>{details.classroom}</dd></div>}<div><dt>BNTS staff</dt><dd>{config.staff.find(s=>s.id===details.staffId)?.name}</dd></div>{preparedFiles.length===1&&<><div><dt>Colour preference</dt><dd>{colourNames.map(c=>c==='Custom'?details.customColour:c).join(', ')}</dd></div><div><dt>Print preferences</dt><dd>{scaleLabel(details.scalePercent)}{dimensionsMm&&<><br/>{dimensionsMm.map(v=>v.toFixed(1)).join(' × ')} mm</>} · {details.supports}<br/>{details.printer} · {details.quality} · {details.copies} {details.copies===1?'copy':'copies'}</dd></div>{needsAdvanced&&<div><dt>Advanced filament</dt><dd className="preserve-text">{details.advancedFilamentNote}</dd></div>}{details.notes&&<div><dt>Your note</dt><dd className="preserve-text">{details.notes}</dd></div>}{details.designLink&&<div><dt>Design link</dt><dd><a href={details.designLink} target="_blank" rel="noreferrer">Open design <ExternalLink size={12}/></a></dd></div>}</>}</dl></section></div><label className="checkbox-row confirmation"><input type="checkbox" checked={details.detailsConfirmed} disabled={busy} onChange={e=>setDetails(d=>({...d,detailsConfirmed:e.target.checked}))}/><span>Everything looks right. Send my file to the printing team.<small>I understand colour and print preferences are subject to staff approval and availability.</small></span></label>{busy&&<div className="upload-progress" role="status"><div><span style={{width:`${progress}%`}}/></div><span>{progress<100?`Uploading… ${progress}%`:'Saving your file… Please keep this page open.'}</span></div>}<div className="actions"><button className="text-button" onClick={()=>setStep(2)} disabled={busy}><ArrowLeft size={16}/> Back to details</button><button className="button primary" onClick={submit} disabled={busy||!details.detailsConfirmed}>{busy?<span className="spinner"/>:<Upload size={17}/>} {busy?'Submitting your file…':'Submit for printing'} {!busy&&<ArrowRight size={17}/>}</button></div></>}
-  </>}
- {config.studentLookupSupported&&(step===0||step===4)&&<ViewAtHome schools={config.lookupSchools||config.schools}/>}
- </div>;
+  const testPrint = async () => {
+    if (!analysis) return;
+    const token = ++printTestToken.current;
+    setPrintTest("running");
+    update({ readyConfirmed: false });
+    setError("");
+    try {
+      const finished = await viewer.current!.testPrint();
+      if (token === printTestToken.current)
+        setPrintTest(finished ? printTestResult(analysis, scaledAnalysis!.warnings) : null);
+    } catch (error) {
+      if (token === printTestToken.current) {
+        setPrintTest(null);
+        setError((error as Error).message);
+      }
+    }
+  };
+  const stopPrintTest = () => {
+    printTestToken.current++;
+    viewer.current?.stopTestPrint();
+    setPrintTest(null);
+  };
+  const confirmModel = async () => {
+    setError("");
+    setBusy(true);
+    try {
+      if (printTest === "running") throw new Error("Finish the test preview before confirming.");
+      if (model && !analysis) throw new Error("Wait for the model checks to finish.");
+      if (!details.readyConfirmed) throw new Error("Confirm that you have checked your model.");
+      if (needsAdvanced && !details.advancedFilamentNote.trim())
+        throw new Error("Describe the advanced filament you need.");
+      if (needsCustom && !details.customColour.trim()) throw new Error("Describe the custom colour you would like.");
+      if (
+        archiveTotal > 1 &&
+        [details.supports, details.printer, details.quality].some((value) => value.startsWith("Custom")) &&
+        !details.notes.trim()
+      )
+        throw new Error("Add a note explaining your custom preferences for this file.");
+      if (archiveTotal > 1 && details.designLink) {
+        let valid = false;
+        try {
+          const link = new URL(details.designLink);
+          valid = link.protocol === "https:" && !link.username && !link.password;
+        } catch {}
+        if (!valid) throw new Error("Use a shareable https design link.");
+      }
+      const blob = model ? await viewer.current!.snapshot() : preview;
+      if (!blob || !file) throw new Error("The preview is not ready.");
+      setPreview(blob);
+      const prepared: PreparedPrint = {
+        file,
+        preview: blob,
+        requestId: details.requestId,
+        preferences: {
+          colour: details.colourMapping[0]?.target || details.colour,
+          customColour: details.customColour,
+          colourMapping: details.colourMapping,
+          advancedFilamentNote: details.advancedFilamentNote,
+          scalePercent: details.scalePercent,
+          dimensionsMm,
+          printOptions: archiveTotal > 1 ? printOptions(details) : undefined,
+        },
+      };
+      setPreparedFiles((previous) => [...previous.filter((p) => p.file !== file), prepared]);
+      if (archiveQueue.length) {
+        const [next, ...rest] = archiveQueue;
+        setArchiveQueue(rest);
+        await choose(next, true);
+      } else setStep(2);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submit = async () => {
+    if (!preparedFiles.length) return;
+    setError("");
+    setBusy(true);
+    setProgress(0);
+    const results = [];
+    try {
+      for (let i = 0; i < preparedFiles.length; i++) {
+        const prepared = preparedFiles[i];
+        const { printOptions: options, ...preferences } = prepared.preferences;
+        const form = new FormData();
+        form.append("model", prepared.file);
+        form.append("preview", prepared.preview, "preview.png");
+        form.append(
+          "details",
+          JSON.stringify({
+            ...details,
+            ...preferences,
+            ...options,
+            requestId: prepared.requestId,
+            size: scaleLabel(prepared.preferences.scalePercent),
+            readyConfirmed: true,
+            detailsConfirmed: true,
+          }),
+        );
+        const result = await upload(form, (value) =>
+          setProgress(Math.round(((i + value / 100) / preparedFiles.length) * 100)),
+        );
+        results.push({ ...result, originalName: prepared.file.name });
+      }
+      setReceipt({ ...results.at(-1), count: results.length, files: results });
+      setStep(4);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reset = () => {
+    worker.current?.terminate();
+    splitDefaults.current = new WeakMap();
+    setStep(0);
+    setModel(null);
+    setFile(null);
+    setReceipt(null);
+    setError("");
+    setAnalysis(undefined);
+    setPreview(null);
+    setDetails(freshDetails());
+    setArchiveQueue([]);
+    setArchiveName("");
+    setArchiveTotal(1);
+    setPreparedFiles([]);
+    getConfig();
+  };
+  if (!config && !configError) return <Loading />;
+  if (configError)
+    return (
+      <section className="narrow panel connection-error">
+        <h1>Connection unavailable</h1>
+        <ErrorMessage message={configError} />
+        <button className="button primary" onClick={getConfig}>
+          <RotateCcw size={16} /> Try again
+        </button>
+      </section>
+    );
+  if (!config) return null;
+  return (
+    <div className={"student " + (step === 0 ? "landing" : "workflow")}>
+      {config.localDemo && (
+        <div className="demo-banner">Development demo · Files stay on this machine, not Google Drive.</div>
+      )}
+      {step === 0 ? (
+        <>
+          <section className="hero">
+            <div className="hero-art" aria-hidden="true">
+              <div className="floating-cube">
+                <svg viewBox="0 0 120 120" fill="none">
+                  <path
+                    d="m60 8 45 26v52L60 112 15 86V34z"
+                    fill="#19c1ca"
+                    fillOpacity=".08"
+                    stroke="#76e4df"
+                    strokeWidth="1.2"
+                  />
+                  <path d="m15 34 45 26 45-26M60 60v52M60 8v52M15 86l45-26 45 26" stroke="#76e4df" strokeOpacity=".4" />
+                  <path d="m60 21 33 19-33 19-33-19z" fill="#19c1ca" fillOpacity=".16" />
+                  <path d="m27 47 33 19v32L27 79z" fill="#19c1ca" fillOpacity=".12" />
+                  <path d="m93 47-33 19v32l33-19z" fill="#b7a2d3" fillOpacity=".25" />
+                </svg>
+              </div>
+              <span className="orbit orbit-one" />
+              <span className="orbit orbit-two" />
+            </div>
+            <h1>
+              UPLOAD YOUR
+              <br />
+              <span>3D PRINTING FILES</span>
+            </h1>
+            <p className="hero-description">Upload your file for the BNTS printing team.</p>
+            <div
+              className={"drop-zone " + (drag ? "dragging" : "") + (!config.acceptingUploads ? " unavailable" : "")}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDrag(true);
+              }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDrag(false);
+                if (config.acceptingUploads && !busy) {
+                  if (e.dataTransfer.files.length > 1) setError("Upload one design at a time.");
+                  else choose(e.dataTransfer.files[0]);
+                }
+              }}
+            >
+              <div className="upload-icon">
+                <Upload size={27} strokeWidth={1.5} />
+              </div>
+              <h2>{busy ? "Opening your file…" : drag ? "Release to select your file" : "Drop your file here"}</h2>
+              <p>or choose a file from your computer</p>
+              <input
+                ref={input}
+                type="file"
+                accept={config.acceptedExtensions.map((e) => "." + e).join(",")}
+                aria-label="Upload a 3D printing file"
+                className="visually-hidden"
+                onChange={(e) => choose(e.target.files?.[0])}
+              />
+              <button
+                className="button primary upload-button"
+                disabled={busy || !config.acceptingUploads}
+                onClick={() => input.current?.click()}
+              >
+                {busy ? <span className="spinner" /> : <FileBox size={18} />} Choose a file <ArrowRight size={17} />
+              </button>
+              <div className="file-types">
+                <span>STL</span>
+                <span>OBJ</span>
+                <span>STEP</span>
+                <span>3MF</span>
+                <span>ZIP</span>
+                {config.acceptedExtensions.some((e) => !["stl", "obj", "step", "stp", "3mf", "zip"].includes(e)) && (
+                  <span>+ more</span>
+                )}
+                <i />
+                Up to {config.maxBytes / 1024 / 1024} MB per file
+              </div>
+            </div>
+            <ErrorMessage message={error} />
+            {!config.acceptingUploads && (
+              <p className="setup-notice">The printing team is setting things up. Please check back shortly.</p>
+            )}
+            <p className="privacy-line">
+              <ShieldCheck size={14} /> No student account needed. Files are automatically deleted after 14 days.
+            </p>
+          </section>
+          <section className="how-it-works" aria-label="How it works">
+            {[
+              { icon: Upload, title: "Upload a file", text: "Choose a supported file from your computer." },
+              { icon: Layers3, title: "Check your model", text: "View your file in 3D and check for issues." },
+              { icon: Palette, title: "Choose print options", text: "Choose colours and add your details." },
+            ].map((item, i) => (
+              <div className="how-item" key={item.title}>
+                <span className="how-icon">
+                  <item.icon size={20} strokeWidth={1.5} />
+                </span>
+                <div>
+                  <h3>
+                    <span>0{i + 1}</span>
+                    {item.title}
+                  </h3>
+                  <p>{item.text}</p>
+                </div>
+              </div>
+            ))}
+          </section>
+        </>
+      ) : step === 4 ? (
+        <section className="success-screen narrow">
+          <div className="success-icon">
+            <Check size={40} />
+          </div>
+          <p className="eyebrow">UPLOAD COMPLETE</p>
+          <h1>
+            File <span>submitted.</span>
+          </h1>
+          <p>
+            Thanks, {receipt.firstName}. The BNTS printing team has your file.
+            <br />
+            Staff will check it before printing.
+          </p>
+          <div className="panel receipt">
+            <FileBox size={26} />
+            <div>
+              <strong>Print request received</strong>
+              <p className="filename">{receipt.count > 1 ? receipt.count + " CAD files" : file?.name}</p>
+              <span>
+                Reference {receipt.id.slice(0, 8).toUpperCase()} · Kept until {dateLabel(receipt.expiresAt)}
+              </span>
+            </div>
+            <CheckCircle2 size={22} />
+          </div>
+          <button className="button primary" onClick={reset}>
+            Upload another file <ArrowRight size={17} />
+          </button>
+        </section>
+      ) : (
+        <>
+          <nav className="stepper" aria-label="Upload progress">
+            {steps.map((name, i) => (
+              <div
+                className={step === i ? "current" : step > i ? "done" : ""}
+                key={name}
+                aria-current={step === i ? "step" : undefined}
+              >
+                <span>{step > i ? <Check size={14} /> : i + 1}</span>
+                <b>{name}</b>
+                {i < 3 && <i />}
+              </div>
+            ))}
+          </nav>
+          <div className="workflow-heading">
+            <p className="eyebrow">STEP {String(step + 1).padStart(2, "0")} / 04</p>
+            <h1 ref={heading} tabIndex={-1}>
+              {step === 1 ? (
+                <>
+                  Check your <span>3D model.</span>
+                </>
+              ) : step === 2 ? (
+                <>
+                  Your <span>details.</span>
+                </>
+              ) : (
+                <>
+                  Review <span>your request.</span>
+                </>
+              )}
+            </h1>
+            <p>
+              {step === 1
+                ? "Rotate your model, check for issues, and choose your colours."
+                : step === 2
+                  ? "Add your first name, school and print preferences."
+                  : "Check your details before sending your file."}
+            </p>
+          </div>
+          {archiveName && (
+            <p className="archive-notice">
+              From {archiveName} · Review file {archiveTotal - archiveQueue.length} of {archiveTotal}. Only supported
+              CAD files will be submitted.
+            </p>
+          )}
+          {file && (
+            <div className="file-bar">
+              <FileBox size={19} />
+              <strong>{file.name}</strong>
+              <span>{bytesLabel(file.size)}</span>
+              <button className="text-button" onClick={reset} disabled={busy}>
+                <X size={15} /> Change file
+              </button>
+            </div>
+          )}
+          <ErrorMessage message={error} />
+          {step === 1 && file && (
+            <>
+              {objects.length > 1 && !splitDismissed && (
+                <section className="panel split-file-prompt" aria-label="Separate objects">
+                  <Info size={22} />
+                  <div>
+                    <strong>This file contains {objects.length} objects.</strong>
+                    <p>Would you like to convert them to separate files? You can choose print settings for each one.</p>
+                    {objects.length > 20 && (
+                      <p>Split this file into smaller groups in your CAD program to review up to 20 files at a time.</p>
+                    )}
+                    <div>
+                      <button
+                        className="button secondary"
+                        disabled={busy || analysing || printTest === "running" || objects.length > 20}
+                        onClick={convertObjects}
+                      >
+                        Convert to separate files
+                      </button>
+                      <button className="text-button" disabled={busy} onClick={() => setSplitDismissed(true)}>
+                        Keep as one file
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
+              <div className="preview-layout">
+                <div className="preview-column">
+                  <>
+                    {model ? (
+                      <Viewer
+                        ref={viewer}
+                        model={model}
+                        analysis={analysis}
+                        mapping={mapping}
+                        scalePercent={details.scalePercent}
+                        advancedSources={advancedSources}
+                        onPartSelect={setSelectedPart}
+                        supportsVisible={showSupports}
+                        onSupportsChange={setShowSupports}
+                      />
+                    ) : (
+                      <UnsupportedPreview filename={file.name} />
+                    )}
+                  </>
+                  <div className="dimension-bar">
+                    {analysis ? (
+                      <>
+                        <span>
+                          <b>{dimensionsMm!.map((d) => d.toFixed(1)).join(" × ")}</b> mm
+                        </span>
+                        <span>{analysis.triangles.toLocaleString()} triangles</span>
+                      </>
+                    ) : (
+                      <span>
+                        {model ? "Reading model dimensions…" : "File will be uploaded in its original format."}
+                      </span>
+                    )}
+                  </div>
+                  <p className="small muted">
+                    The original file is unchanged. Staff apply your saved scale and colour preferences before printing.
+                  </p>
+                  {model && (
+                    <section className="print-test-panel">
+                      <div className="print-test-actions">
+                        <button
+                          className="button secondary"
+                          disabled={
+                            analysing ||
+                            !analysis ||
+                            !analysis.complete ||
+                            analysis.components > 64 ||
+                            printTest === "running"
+                          }
+                          onClick={testPrint}
+                        >
+                          <Play size={16} /> Test print
+                        </button>
+                        {printTest === "running" && (
+                          <button className="text-button" onClick={stopPrintTest}>
+                            <Square size={14} /> Stop preview
+                          </button>
+                        )}
+                      </div>
+                      <p className="small muted">
+                        This preview estimates how layers build. Your teacher will check the final print.
+                      </p>
+                      {analysis && (!analysis.complete || analysis.components > 64) && (
+                        <p className="small muted">
+                          This model is too detailed for the test preview. Ask your teacher to check it.
+                        </p>
+                      )}
+                      {printTest && printTest !== "running" && (
+                        <div className={"print-test-result " + printTest.state} role="status">
+                          <strong>{printTest.title}</strong>
+                          {printTest.fixes.length > 0 ? (
+                            <ul>
+                              {printTest.fixes.map((fix) => (
+                                <li key={fix}>{fix}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>Ask your teacher to check the model before printing.</p>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  )}
+                </div>
+                <aside className="panel checks-panel">
+                  <div className="section-label">
+                    <Sparkles size={17} /> Model checks
+                  </div>
+                  {analysing ? (
+                    <Loading />
+                  ) : analysis ? (
+                    <>
+                      <div className={"check-summary " + (scaledAnalysis!.warnings.length ? "warning" : "")}>
+                        <span>
+                          {scaledAnalysis!.warnings.length ? <AlertTriangle size={22} /> : <CheckCircle2 size={22} />}
+                        </span>
+                        <div>
+                          <strong>
+                            {!analysis.complete
+                              ? "Staff need to check this model"
+                              : scaledAnalysis!.warnings.length
+                                ? "Check these issues"
+                                : model?.format === "obj"
+                                  ? "OBJ preview ready"
+                                  : "No common issues found"}
+                          </strong>
+                          <small>
+                            {scaledAnalysis!.warnings.length
+                              ? "Ask staff if you need help with a warning."
+                              : model?.format === "obj"
+                                ? "Staff will check the final model before printing."
+                                : "No common mesh issues detected."}
+                          </small>
+                        </div>
+                      </div>
+                      <div className="checks-list">
+                        {scaledAnalysis!.warnings.map((w) => (
+                          <div className="check-warning" key={w.code}>
+                            <AlertTriangle size={15} />
+                            <div>
+                              <b>{w.title}</b>
+                              <p>{w.detail}</p>
+                            </div>
+                          </div>
+                        ))}
+                        {!scaledAnalysis!.warnings.length &&
+                          (model?.format === "obj" ? (
+                            <>
+                              <div>
+                                <Check size={16} /> Preview loaded
+                              </div>
+                              <div>
+                                <Check size={16} /> Dimensions shown in mm
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div>
+                                <Check size={16} /> {sections ? "Joined sections checked" : "Connected parts checked"}
+                              </div>
+                              <div>
+                                <Check size={16} /> No open mesh edges found
+                              </div>
+                              <div>
+                                <Check size={16} /> Model size checked
+                              </div>
+                            </>
+                          ))}
+                        {analysis.notices.map((n) =>
+                          n.code === "supports" ? (
+                            <button
+                              type="button"
+                              className="check-support-card"
+                              key={n.code}
+                              aria-pressed={showSupports}
+                              disabled={printTest === "running"}
+                              onClick={() => setShowSupports((value) => !value)}
+                            >
+                              <Info size={17} />
+                              <span>
+                                <strong>{n.title}</strong>
+                                <small>{n.detail}</small>
+                                <em>{showSupports ? "Hide supports" : "Simulate supports"}</em>
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="check-info" key={n.code}>
+                              <CheckCircle2 size={15} />
+                              <div>
+                                <b>{n.title}</b>
+                                <p>{n.detail}</p>
+                              </div>
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="notice">
+                      Model checks are not available for this file type. Check the file in your CAD program before
+                      continuing. Staff will check the original file before printing.
+                    </div>
+                  )}
+                </aside>
+              </div>
+              <section className="panel scale-panel">
+                <div className="section-label">Scale your model</div>
+                <p className="small muted">
+                  Adjust the scale to make your print smaller or larger. Dimensions are shown in mm.
+                </p>
+                <div className="scale-controls">
+                  <input
+                    type="range"
+                    aria-label="Model scale slider"
+                    min={1}
+                    max={1000}
+                    step={1}
+                    value={details.scalePercent}
+                    onChange={(e) => update({ scalePercent: Number(e.target.value), readyConfirmed: false })}
+                  />
+                  <label className="field">
+                    Scale (%)
+                    <input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      step={1}
+                      value={details.scalePercent}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v))
+                          update({ scalePercent: Math.min(1000, Math.max(1, v)), readyConfirmed: false });
+                      }}
+                    />
+                  </label>
+                  <button className="text-button" onClick={() => update({ scalePercent: 100, readyConfirmed: false })}>
+                    Reset to 100%
+                  </button>
+                </div>
+                <p className="scale-dimensions">
+                  {dimensionsMm
+                    ? dimensionsMm.map((v) => v.toFixed(1)).join(" × ") + " mm"
+                    : "Dimensions are unavailable for this file type."}
+                </p>
+              </section>
+              <ColourEditor
+                key={file.name + file.size}
+                model={model}
+                sections={sections}
+                mapping={details.colourMapping}
+                colours={config.colours}
+                customEnabled={config.customColourEnabled}
+                selectedPart={selectedPart}
+                onSelect={setSelectedPart}
+                onMapping={(value) =>
+                  update({
+                    colourMapping: value.map((entry, i) => ({
+                      ...entry,
+                      partName: areaName(model, entry.source, i, sections).slice(0, 80),
+                    })),
+                    colour: value[0]?.target || details.colour,
+                    readyConfirmed: false,
+                  })
+                }
+                customColour={details.customColour}
+                advancedNote={details.advancedFilamentNote}
+                onCustom={(value) => update({ customColour: value })}
+                onAdvanced={(value) => update({ advancedFilamentNote: value })}
+              />
+              {archiveTotal > 1 && (
+                <section className="panel details-panel">
+                  <div className="section-label">Print settings for this file</div>
+                  <PrintPreferences value={details} onChange={update} />
+                </section>
+              )}
+              <label className="checkbox-row confirmation">
+                <input
+                  type="checkbox"
+                  checked={details.readyConfirmed}
+                  onChange={(e) => update({ readyConfirmed: e.target.checked })}
+                />
+                <span>
+                  I’ve checked my model and it’s ready for the printing team.
+                  <small>If a warning needs help, I’ll explain it in my notes.</small>
+                </span>
+              </label>
+              <div className="actions">
+                <button className="text-button" onClick={reset}>
+                  <ArrowLeft size={16} /> Back to upload
+                </button>
+                <button
+                  className="button primary"
+                  disabled={
+                    busy || printTest === "running" || (!!model && !analysis) || analysing || !details.readyConfirmed
+                  }
+                  onClick={confirmModel}
+                >
+                  {archiveQueue.length ? "Confirm and review next file" : "Confirm my model"} <ArrowRight size={17} />
+                </button>
+              </div>
+            </>
+          )}
+          {step === 2 && (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setError("");
+                if (needsCustom && !details.customColour.trim()) {
+                  setError("Add your custom colour request.");
+                  return;
+                }
+                if (
+                  [details.supports, details.printer, details.quality].some((x) => x.startsWith("Custom")) &&
+                  !details.notes.trim()
+                ) {
+                  setError("Add a note explaining your custom preferences.");
+                  return;
+                }
+                setBusy(true);
+                try {
+                  const result = await api("/classes/resolve", {
+                    method: "POST",
+                    body: JSON.stringify({ schoolId: details.schoolId, classCode: details.classCode }),
+                  });
+                  update({ classId: result.classId, classroom: result.classroom });
+                  setStep(3);
+                } catch (error) {
+                  setError((error as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <section className="panel details-panel">
+                <div className="section-label">
+                  <span className="section-number">01</span> Student details
+                </div>
+                <div className="form-grid">
+                  <label className="field full">
+                    First name <em>*</em>
+                    <input
+                      required
+                      maxLength={40}
+                      autoComplete="given-name"
+                      value={details.firstName}
+                      onChange={(e) => update({ firstName: e.target.value })}
+                      placeholder="Just your first name"
+                    />
+                    <small>No surname or email needed.</small>
+                  </label>
+                  <label className="field">
+                    School <em>*</em>
+                    <select
+                      required
+                      value={details.schoolId}
+                      onChange={(e) => update({ schoolId: e.target.value, classId: "", classCode: "", classroom: "" })}
+                    >
+                      <option value="">Choose your school</option>
+                      {config.schools.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    BNTS staff member <em>*</em>
+                    <select required value={details.staffId} onChange={(e) => update({ staffId: e.target.value })}>
+                      <option value="">Choose a staff member</option>
+                      {config.staff.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field full">
+                    Class code <span className="optional">optional</span>
+                    <input
+                      type="text"
+                      maxLength={80}
+                      autoComplete="off"
+                      value={details.classCode}
+                      onChange={(e) => update({ classCode: e.target.value, classId: "", classroom: "" })}
+                      disabled={!details.schoolId}
+                      placeholder="Enter the code from your teacher"
+                    />
+                    <small>Leave this blank if you are not joining a class.</small>
+                  </label>
+                </div>
+              </section>
+              <section className="panel details-panel">
+                <div className="section-label">
+                  <span className="section-number">02</span> How would you like it printed?
+                </div>
+                {preparedFiles.length > 1 ? (
+                  <>
+                    <p className="small muted">Each file has its own saved print settings.</p>
+                    <ArchiveSummary prints={preparedFiles} />
+                  </>
+                ) : (
+                  <>
+                    <div className="chosen-colours">
+                      {colourNames.map((name) => (
+                        <span key={name}>
+                          <i className="swatch" style={{ background: targetHex(name) }} />
+                          {name === "Custom" ? details.customColour : name}
+                        </span>
+                      ))}
+                      <button type="button" className="text-button" onClick={() => setStep(1)}>
+                        Change colours
+                      </button>
+                    </div>
+                    <PrintPreferences value={details} onChange={update} />
+                  </>
+                )}
+              </section>
+              <div className="actions">
+                <button type="button" className="text-button" onClick={() => setStep(1)}>
+                  <ArrowLeft size={16} /> Back to your model
+                </button>
+                <button className="button primary" disabled={busy}>
+                  {busy ? "Checking class code…" : "Review my request"} <ArrowRight size={17} />
+                </button>
+              </div>
+            </form>
+          )}
+          {step === 3 && file && (
+            <>
+              <div className="review-layout">
+                <div>
+                  <>
+                    {model ? (
+                      <Viewer
+                        model={model}
+                        mapping={mapping}
+                        scalePercent={details.scalePercent}
+                        advancedSources={advancedSources}
+                        compact
+                      />
+                    ) : (
+                      <UnsupportedPreview filename={file.name} />
+                    )}
+                  </>
+                  <div className="review-privacy">
+                    <ShieldCheck size={20} />
+                    <p>
+                      The printing team can view your full request. Your model is also available through View at home.
+                      Files are deleted after 14 days.
+                    </p>
+                  </div>
+                </div>
+                <section className="panel review-details">
+                  {preparedFiles.length > 1 && <ArchiveSummary prints={preparedFiles} />}
+                  <div className="section-label">
+                    Print details{" "}
+                    <button className="text-button" onClick={() => setStep(2)} disabled={busy}>
+                      Edit details
+                    </button>
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>First name</dt>
+                      <dd>{details.firstName}</dd>
+                    </div>
+                    <div>
+                      <dt>School</dt>
+                      <dd>{config.schools.find((s) => s.id === details.schoolId)?.name}</dd>
+                    </div>
+                    {details.classId && (
+                      <div>
+                        <dt>Class</dt>
+                        <dd>{details.classroom}</dd>
+                      </div>
+                    )}
+                    <div>
+                      <dt>BNTS staff</dt>
+                      <dd>{config.staff.find((s) => s.id === details.staffId)?.name}</dd>
+                    </div>
+                    {preparedFiles.length === 1 && (
+                      <>
+                        <div>
+                          <dt>Colour preference</dt>
+                          <dd>{colourNames.map((c) => (c === "Custom" ? details.customColour : c)).join(", ")}</dd>
+                        </div>
+                        <div>
+                          <dt>Print preferences</dt>
+                          <dd>
+                            {scaleLabel(details.scalePercent)}
+                            {dimensionsMm && (
+                              <>
+                                <br />
+                                {dimensionsMm.map((v) => v.toFixed(1)).join(" × ")} mm
+                              </>
+                            )}{" "}
+                            · {details.supports}
+                            <br />
+                            {details.printer} · {details.quality} · {details.copies}{" "}
+                            {details.copies === 1 ? "copy" : "copies"}
+                          </dd>
+                        </div>
+                        {needsAdvanced && (
+                          <div>
+                            <dt>Advanced filament</dt>
+                            <dd className="preserve-text">{details.advancedFilamentNote}</dd>
+                          </div>
+                        )}
+                        {details.notes && (
+                          <div>
+                            <dt>Your note</dt>
+                            <dd className="preserve-text">{details.notes}</dd>
+                          </div>
+                        )}
+                        {details.designLink && (
+                          <div>
+                            <dt>Design link</dt>
+                            <dd>
+                              <a href={details.designLink} target="_blank" rel="noreferrer">
+                                Open design <ExternalLink size={12} />
+                              </a>
+                            </dd>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </dl>
+                </section>
+              </div>
+              <label className="checkbox-row confirmation">
+                <input
+                  type="checkbox"
+                  checked={details.detailsConfirmed}
+                  disabled={busy}
+                  onChange={(e) => setDetails((d) => ({ ...d, detailsConfirmed: e.target.checked }))}
+                />
+                <span>
+                  Everything looks right. Send my file to the printing team.
+                  <small>
+                    I understand colour and print preferences are subject to staff approval and availability.
+                  </small>
+                </span>
+              </label>
+              {busy && (
+                <div className="upload-progress" role="status">
+                  <div>
+                    <span style={{ width: `${progress}%` }} />
+                  </div>
+                  <span>
+                    {progress < 100 ? `Uploading… ${progress}%` : "Saving your file… Please keep this page open."}
+                  </span>
+                </div>
+              )}
+              <div className="actions">
+                <button className="text-button" onClick={() => setStep(2)} disabled={busy}>
+                  <ArrowLeft size={16} /> Back to details
+                </button>
+                <button className="button primary" onClick={submit} disabled={busy || !details.detailsConfirmed}>
+                  {busy ? <span className="spinner" /> : <Upload size={17} />}{" "}
+                  {busy ? "Submitting your file…" : "Submit for printing"} {!busy && <ArrowRight size={17} />}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+      {config.studentLookupSupported && (step === 0 || step === 4) && (
+        <ViewAtHome schools={config.lookupSchools || config.schools} />
+      )}
+    </div>
+  );
 }
-function closestColour(hex:string,config:Config){const rgb=(c:string)=>[1,3,5].map(i=>parseInt(c.slice(i,i+2),16));const source=rgb(hex);return [...config.colours].sort((a,b)=>{const distance=(h:string)=>rgb(h).reduce((sum,n,i)=>sum+(n-source[i])**2,0);return distance(a.hex)-distance(b.hex);})[0]?.name||'Custom';}
+function closestColour(hex: string, config: Config) {
+  const rgb = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  const source = rgb(hex);
+  return (
+    [...config.colours].sort((a, b) => {
+      const distance = (h: string) => rgb(h).reduce((sum, n, i) => sum + (n - source[i]) ** 2, 0);
+      return distance(a.hex) - distance(b.hex);
+    })[0]?.name || "Custom"
+  );
+}
 
-function UnsupportedPreview({filename}:{filename:string}){return <div className="unsupported-preview"><FileBox size={45} strokeWidth={1.2}/><strong>{filename.split('.').at(-1)?.toUpperCase()} file</strong><p>Preview not supported for this file type.</p><span>The original file will be sent to the printing team.</span></div>;}
+function UnsupportedPreview({ filename }: { filename: string }) {
+  return (
+    <div className="unsupported-preview">
+      <FileBox size={45} strokeWidth={1.2} />
+      <strong>{filename.split(".").at(-1)?.toUpperCase()} file</strong>
+      <p>Preview not supported for this file type.</p>
+      <span>The original file will be sent to the printing team.</span>
+    </div>
+  );
+}
 
-function ArchiveSummary({prints}:{prints:PreparedPrint[]}){return <div className="archive-summary"><h3>{prints.length} CAD files</h3>{prints.map(print=><ArchiveItem key={print.requestId} print={print}/>)}</div>;}
-function ArchiveItem({print}:{print:PreparedPrint}){const[url,setUrl]=useState('');useEffect(()=>{const value=URL.createObjectURL(print.preview);setUrl(value);return()=>URL.revokeObjectURL(value);},[print.preview]);return <div><img src={url} alt={'Preview of '+print.file.name}/><span><b>{print.file.name}</b><small>{scaleLabel(print.preferences.scalePercent)}{print.preferences.dimensionsMm?' · '+print.preferences.dimensionsMm.map(v=>v.toFixed(1)).join(' × ')+' mm':''}</small><small>{print.preferences.colourMapping.map((m,i)=>(m.partName||'Part '+(i+1))+': '+m.target).join(' · ')}</small>{print.preferences.advancedFilamentNote&&<small>Advanced filament: {print.preferences.advancedFilamentNote}</small>}{print.preferences.printOptions&&<><small>{print.preferences.printOptions.supports} · {print.preferences.printOptions.printer} · {print.preferences.printOptions.quality} · {print.preferences.printOptions.copies} {print.preferences.printOptions.copies===1?'copy':'copies'}</small>{print.preferences.printOptions.notes&&<small>Note: {print.preferences.printOptions.notes}</small>}</>}</span></div>;}
+function ArchiveSummary({ prints }: { prints: PreparedPrint[] }) {
+  return (
+    <div className="archive-summary">
+      <h3>{prints.length} CAD files</h3>
+      {prints.map((print) => (
+        <ArchiveItem key={print.requestId} print={print} />
+      ))}
+    </div>
+  );
+}
+function ArchiveItem({ print }: { print: PreparedPrint }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    const value = URL.createObjectURL(print.preview);
+    setUrl(value);
+    return () => URL.revokeObjectURL(value);
+  }, [print.preview]);
+  return (
+    <div>
+      <img src={url} alt={"Preview of " + print.file.name} />
+      <span>
+        <b>{print.file.name}</b>
+        <small>
+          {scaleLabel(print.preferences.scalePercent)}
+          {print.preferences.dimensionsMm
+            ? " · " + print.preferences.dimensionsMm.map((v) => v.toFixed(1)).join(" × ") + " mm"
+            : ""}
+        </small>
+        <small>
+          {print.preferences.colourMapping
+            .map((m, i) => (m.partName || "Part " + (i + 1)) + ": " + m.target)
+            .join(" · ")}
+        </small>
+        {print.preferences.advancedFilamentNote && (
+          <small>Advanced filament: {print.preferences.advancedFilamentNote}</small>
+        )}
+        {print.preferences.printOptions && (
+          <>
+            <small>
+              {print.preferences.printOptions.supports} · {print.preferences.printOptions.printer} ·{" "}
+              {print.preferences.printOptions.quality} · {print.preferences.printOptions.copies}{" "}
+              {print.preferences.printOptions.copies === 1 ? "copy" : "copies"}
+            </small>
+            {print.preferences.printOptions.notes && <small>Note: {print.preferences.printOptions.notes}</small>}
+          </>
+        )}
+      </span>
+    </div>
+  );
+}

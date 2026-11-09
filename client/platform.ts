@@ -5,5 +5,7 @@ declare global {
   }
 }
 export const isAppsScript = !!window.BNTS_GAS;
-export const homeUrl = isAppsScript ? window.BNTS_GAS!.baseUrl : '/';
-export const isTeacherPage = isAppsScript ? window.BNTS_GAS!.teacher : location.pathname.replace(/\/$/, '') === '/teacher';
+export const homeUrl = isAppsScript ? window.BNTS_GAS!.baseUrl : "/";
+export const isTeacherPage = isAppsScript
+  ? window.BNTS_GAS!.teacher
+  : location.pathname.replace(/\/$/, "") === "/teacher";

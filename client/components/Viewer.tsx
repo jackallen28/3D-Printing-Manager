@@ -56,7 +56,8 @@ export const Viewer = forwardRef<
       size: THREE.Vector3;
       controls: OrbitControls;
       render: () => void;
-      reset: () => void;
+      reset: (animate?: boolean) => void;
+      flyTo: (position: THREE.Vector3, target: THREE.Vector3) => void;
       overlays: THREE.Object3D[];
     } | null>(null);
     const [error, setError] = useState("");
@@ -139,7 +140,9 @@ export const Viewer = forwardRef<
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100000);
       const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = false;
+      // Gentle damping makes rotating and zooming ease to a stop instead of halting abruptly.
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.12;
       controls.maxPolarAngle = Math.PI * 0.88;
       const ambient = new THREE.HemisphereLight("#e4faff", "#25304a", 2.5);
       scene.add(ambient);
@@ -155,7 +158,24 @@ export const Viewer = forwardRef<
           n.geometry = n.geometry.clone();
           n.material = Array.isArray(n.material) ? n.material.map((m) => m.clone()) : n.material.clone();
           const attr = n.geometry.getAttribute("color");
-          if (attr) n.geometry.userData.originalColours = new Float32Array(attr.array);
+          if (attr) {
+            const original = new Float32Array(attr.array),
+              keys: string[] = [],
+              lookup = new Map<string, number>(),
+              sourceIndex = new Uint16Array(attr.count),
+              colour = new THREE.Color();
+            for (let i = 0; i < attr.count; i++) {
+              const key = "#" + colour.setRGB(original[i * 3], original[i * 3 + 1], original[i * 3 + 2]).getHexString();
+              let index = lookup.get(key);
+              if (index === undefined) {
+                index = keys.length;
+                keys.push(key);
+                lookup.set(key, index);
+              }
+              sourceIndex[i] = index;
+            }
+            Object.assign(n.geometry.userData, { originalColours: original, sourceKeys: keys, sourceIndex });
+          }
           n.geometry.setAttribute(
             "bntsGlitter",
             new THREE.BufferAttribute(new Float32Array(n.geometry.getAttribute("position").count), 1),
@@ -181,17 +201,77 @@ export const Viewer = forwardRef<
       scene.add(grid);
       const target = new THREE.Vector3(0, (size.z * 0.5 * scaleRef.current) / 100, 0);
       const render = () => renderer.render(scene, camera);
-      const reset = () => {
+      // Render on demand: a frame loop runs only while the camera is moving, then stops.
+      let frame = 0,
+        interacting = false,
+        flight: {
+          from: THREE.Vector3;
+          to: THREE.Vector3;
+          fromTarget: THREE.Vector3;
+          toTarget: THREE.Vector3;
+          start: number;
+        } | null = null;
+      const FLIGHT_MS = 550;
+      const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+      const loop = (now: number) => {
+        frame = 0;
+        if (flight) {
+          const t = Math.min(1, (now - flight.start) / FLIGHT_MS),
+            k = ease(t);
+          camera.position.lerpVectors(flight.from, flight.to, k);
+          controls.target.lerpVectors(flight.fromTarget, flight.toTarget, k);
+          if (t >= 1) flight = null;
+        }
+        const moved = controls.update();
+        if (!moved) render();
+        if (flight || interacting || moved) frame = requestAnimationFrame(loop);
+      };
+      const wake = () => {
+        if (!frame) frame = requestAnimationFrame(loop);
+      };
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const flyTo = (position: THREE.Vector3, nextTarget: THREE.Vector3) => {
+        // Follows the device's reduce-motion setting: jump straight there when it is on.
+        if (reducedMotion.matches) {
+          flight = null;
+          camera.position.copy(position);
+          controls.target.copy(nextTarget);
+          controls.update();
+          render();
+          return;
+        }
+        flight = {
+          from: camera.position.clone(),
+          to: position.clone(),
+          fromTarget: controls.target.clone(),
+          toTarget: nextTarget.clone(),
+          start: performance.now(),
+        };
+        wake();
+      };
+      const reset = (animate = true) => {
         target.set(0, (size.z * 0.5 * scaleRef.current) / 100, 0);
         const halfFov = THREE.MathUtils.degToRad(camera.fov / 2),
           angle = Math.min(halfFov, Math.atan(Math.tan(halfFov) * camera.aspect));
         const distance = (Math.max(((size.length() / 2) * scaleRef.current) / 100, 5) / Math.sin(angle)) * 1.22;
-        camera.position.copy(target).add(new THREE.Vector3(1.3, 1, 1.6).normalize().multiplyScalar(distance));
+        const position = target.clone().add(new THREE.Vector3(1.3, 1, 1.6).normalize().multiplyScalar(distance));
+        if (animate) return flyTo(position, target);
+        camera.position.copy(position);
         controls.target.copy(target);
         controls.update();
         render();
       };
       controls.addEventListener("change", render);
+      controls.addEventListener("start", () => {
+        // The person takes over: stop any camera flight where it is.
+        flight = null;
+        interacting = true;
+        wake();
+      });
+      controls.addEventListener("end", () => {
+        interacting = false;
+        wake();
+      });
       const raycaster = new THREE.Raycaster();
       let pointerStart = { x: 0, y: 0 };
       const down = (event: PointerEvent) => {
@@ -238,11 +318,24 @@ export const Viewer = forwardRef<
       const observer = new ResizeObserver(resize);
       observer.observe(host);
       resize();
-      reset();
-      runtime.current = { renderer, camera, scene, object, root: rotate, size, controls, render, reset, overlays: [] };
+      reset(false);
+      runtime.current = {
+        renderer,
+        camera,
+        scene,
+        object,
+        root: rotate,
+        size,
+        controls,
+        render,
+        reset,
+        flyTo,
+        overlays: [],
+      };
       // Overlay uses the same world coordinates as analysis, before the preview's centring transform.
       runtime.current.object.userData.content = content;
       return () => {
+        cancelAnimationFrame(frame);
         animation.current?.stop();
         animation.current = null;
         observer.disconnect();
@@ -264,19 +357,33 @@ export const Viewer = forwardRef<
       if (!r) return;
       r.object.traverse((n) => {
         if (n instanceof THREE.Mesh) {
-          const attribute = n.geometry.getAttribute("color"),
-            original = n.geometry.userData.originalColours as Float32Array | undefined;
-          const glitter = n.geometry.getAttribute("bntsGlitter");
+          const attribute = n.geometry.getAttribute("color") as THREE.BufferAttribute | undefined,
+            original = n.geometry.userData.originalColours as Float32Array | undefined,
+            keys = n.geometry.userData.sourceKeys as string[] | undefined,
+            sourceIndex = n.geometry.userData.sourceIndex as Uint16Array | undefined;
+          const glitter = n.geometry.getAttribute("bntsGlitter") as THREE.BufferAttribute;
           let sparkling = false;
-          if (attribute && original) {
-            for (let i = 0; i < attribute.count; i++) {
-              const source = new THREE.Color().setRGB(original[i * 3], original[i * 3 + 1], original[i * 3 + 2]);
-              const key = "#" + source.getHexString();
-              const active = advancedSources.includes(key);
-              glitter.setX(i, active ? 1 : 0);
-              sparkling ||= active;
-              const next = mapping[key] ? new THREE.Color(mapping[key]) : source;
-              attribute.setXYZ(i, next.r, next.g, next.b);
+          if (attribute && original && keys && sourceIndex) {
+            const colours = attribute.array as Float32Array,
+              flags = glitter.array as Float32Array;
+            // One target colour and glitter flag per source colour, then a fast copy per vertex.
+            const targets = keys.map((key) => (mapping[key] ? new THREE.Color(mapping[key]) : null));
+            const active = keys.map((key) => advancedSources.includes(key));
+            sparkling = active.some(Boolean);
+            for (let i = 0; i < sourceIndex.length; i++) {
+              const k = sourceIndex[i],
+                next = targets[k],
+                o = i * 3;
+              if (next) {
+                colours[o] = next.r;
+                colours[o + 1] = next.g;
+                colours[o + 2] = next.b;
+              } else {
+                colours[o] = original[o];
+                colours[o + 1] = original[o + 1];
+                colours[o + 2] = original[o + 2];
+              }
+              flags[i] = active[k] ? 1 : 0;
             }
             attribute.needsUpdate = true;
           }
@@ -392,10 +499,8 @@ export const Viewer = forwardRef<
           analysis.supportContacts.length;
       const distance = r.camera.position.distanceTo(r.controls.target),
         target = new THREE.Vector3(0, ((height - ground) * scaleRef.current) / 100, 0);
-      r.camera.position.copy(target).add(new THREE.Vector3(1.3, 0, 1.6).normalize().multiplyScalar(distance));
-      r.controls.target.copy(target);
-      r.controls.update();
-      r.render();
+      // Glide down to a low angle so the underside and supports come into view.
+      r.flyTo(target.clone().add(new THREE.Vector3(1.3, 0, 1.6).normalize().multiplyScalar(distance)), target);
     }, [supportShown, analysis, model]);
     return (
       <div

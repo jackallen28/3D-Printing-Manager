@@ -10,6 +10,7 @@ export interface PrintProgress {
 }
 interface AnimationOptions {
   renderer: THREE.WebGLRenderer;
+  camera: THREE.Camera;
   scene: THREE.Scene;
   object: THREE.Group;
   content: THREE.Group;
@@ -25,6 +26,7 @@ interface AnimationOptions {
 export function animatePrint(options: AnimationOptions): { finished: Promise<boolean>; stop: () => void } {
   const {
     renderer,
+    camera,
     scene,
     object,
     content,
@@ -68,17 +70,20 @@ export function animatePrint(options: AnimationOptions): { finished: Promise<boo
     geometry.setAttribute("color", new THREE.BufferAttribute(colourData, 3));
     geometry.setAttribute("bntsGlitter", new THREE.BufferAttribute(glitter, 1));
     geometry.computeVertexNormals();
+    // Floating parts get their own plane: releasing them moves the plane away instead of removing it,
+    // so the shader program never changes (and never recompiles) mid-animation.
+    const ownPlane = floating.has(part) ? new THREE.Plane(new THREE.Vector3(0, -1, 0), 0) : plane;
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.55,
       side: THREE.DoubleSide,
-      clippingPlanes: [plane],
+      clippingPlanes: [ownPlane],
     });
     addGlitterShader(material);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(center);
     group.add(mesh);
-    return { mesh, center, bounds, floating: floating.has(part), releasedAt: -1 };
+    return { mesh, center, bounds, floating: floating.has(part), plane: ownPlane, releasedAt: -1 };
   });
   const oldClipping = renderer.localClippingEnabled;
   renderer.localClippingEnabled = true;
@@ -97,12 +102,14 @@ export function animatePrint(options: AnimationOptions): { finished: Promise<boo
   );
   buildPlane.rotation.x = -Math.PI / 2;
   scene.add(buildPlane);
+  // Compile the new materials now, so the first animated frame doesn't stall on shader compilation.
+  renderer.compile(scene, camera);
   const minZ = Math.min(...analysis.partBounds.map((part) => part.min[2]));
   const layers = Math.max(1, Math.ceil(height / 0.2)),
-    start = performance.now(),
     buildDuration = 5200,
     settleDuration = floating.size ? 1300 : 0;
   let frame = 0,
+    start = -1,
     stopped = false,
     lastProgress = -1,
     complete: (finished: boolean) => void = () => {};
@@ -133,16 +140,28 @@ export function animatePrint(options: AnimationOptions): { finished: Promise<boo
   };
   const tick = (now: number) => {
     if (stopped) return;
+    // The first frame is a warm-up draw that uploads the new geometry to the GPU. The clock starts after it,
+    // so that one-off cost never shows as a jump in the animation.
+    if (start < 0) {
+      plane.constant = 0;
+      for (const actor of actors) actor.plane.constant = 0;
+      render();
+      start = performance.now();
+      frame = requestAnimationFrame(tick);
+      return;
+    }
     const elapsed = now - start,
       fraction = Math.min(1, elapsed / buildDuration),
       layer = Math.min(layers, Math.floor(fraction * layers) + 1),
-      level = Math.min(height, layer * 0.2);
+      // The cut rises continuously so the build looks smooth; the label still counts whole layers.
+      level = Math.min(height, fraction * height + 0.001);
     plane.constant = level;
     head.visible = elapsed < buildDuration;
+    // A steady sweep across the bed, slow enough to read as a moving print head rather than flicker.
     head.position.set(
-      Math.sin(elapsed * 0.027) * size.x * scale * 0.48,
+      Math.sin(elapsed * 0.0085) * size.x * scale * 0.48,
       level + 2,
-      Math.sin(elapsed * 0.006) * size.y * scale * 0.45,
+      Math.sin(elapsed * 0.0031) * size.y * scale * 0.45,
     );
     buildPlane.position.y = level;
     let falling = 0;
@@ -151,13 +170,14 @@ export function animatePrint(options: AnimationOptions): { finished: Promise<boo
         const releaseHeight =
           (actor.bounds.min[2] - minZ) * scale +
           Math.min(0.4, (actor.bounds.max[2] - actor.bounds.min[2]) * scale * 0.25);
+        if (actor.releasedAt < 0) actor.plane.constant = level;
         if (actor.releasedAt < 0 && level >= releaseHeight) {
           actor.releasedAt = elapsed;
-          actor.mesh.material.clippingPlanes = [];
+          actor.plane.constant = 1e9;
+          // Colour changes are uniforms, so no shader recompile is needed.
           actor.mesh.material.color.set("#ff716c");
           actor.mesh.material.emissive.set("#8b1513");
           actor.mesh.material.emissiveIntensity = 0.6;
-          actor.mesh.material.needsUpdate = true;
         }
         if (actor.releasedAt >= 0) {
           falling++;

@@ -12,7 +12,8 @@ import {
   Square,
   Info,
 } from "lucide-react";
-import { api, upload, setUploadMode } from "./lib/api";
+import { api, upload, setUploadMode, setHumanToken } from "./lib/api";
+import HumanCheck from "./components/HumanCheck";
 import { loadModel, splitModelParts, areaName, type LoadedModel } from "./lib/model";
 import { Viewer, type ViewerHandle } from "./components/Viewer";
 import { ErrorMessage, Field, Loading, PageLoading, bytesLabel, dateLabel } from "./components/Layout";
@@ -95,6 +96,12 @@ export default function Student() {
   // Beginner shows the essentials; Advanced adds per-part colours, file splitting, special filaments,
   // viewer tools and print settings. Remembered on this device.
   const [mode, setMode] = useState<Mode>(savedMode);
+  // A signed pass from the optional robot check. It covers every file in this request for 30 minutes.
+  const [humanPass, setHumanPass] = useState("");
+  const passHuman = (pass: string) => {
+    setHumanToken(pass);
+    setHumanPass(pass);
+  };
   const expert = mode === "advanced";
   const changeMode = (next: Mode) => {
     setMode(next);
@@ -453,6 +460,8 @@ export default function Student() {
       setReceipt({ ...results.at(-1), count: results.length, files: results });
       setStep(4);
     } catch (e) {
+      // The robot-check pass lasts 30 minutes; if it ran out, ask again rather than failing.
+      if (/robot check/i.test((e as Error).message)) passHuman("");
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -547,7 +556,11 @@ export default function Student() {
           </div>
           <ErrorMessage message={error} />
           {!config.acceptingUploads && (
-            <p className="notice">Uploads aren’t open yet. Your teacher is still setting things up.</p>
+            <p className="notice">
+              {config.uploadsPaused
+                ? "Uploads are paused right now. Ask your teacher when they’ll be back on."
+                : "Uploads aren’t open yet. Your teacher is still setting things up."}
+            </p>
           )}
           <p className="hint">You don’t need an account. Files are deleted after 14 days.</p>
         </section>
@@ -1013,8 +1026,14 @@ export default function Student() {
                   </label>
                   <Field
                     label="Class code"
-                    optional
-                    hint={details.schoolId ? "Only if your teacher gave you one." : "Choose your school first."}
+                    optional={!config.requireClassCode}
+                    hint={
+                      !details.schoolId
+                        ? "Choose your school first."
+                        : config.requireClassCode
+                          ? "Ask your teacher for your class code."
+                          : "Only if your teacher gave you one."
+                    }
                   >
                     <input
                       type="text"
@@ -1023,6 +1042,7 @@ export default function Student() {
                       value={details.classCode}
                       onChange={(e) => update({ classCode: e.target.value, classId: "", classroom: "" })}
                       disabled={!details.schoolId}
+                      required={config.requireClassCode}
                     />
                   </Field>
                 </div>
@@ -1187,11 +1207,18 @@ export default function Student() {
                   <span>{progress < 100 ? `Sending… ${progress}%` : "Saving… Keep this page open."}</span>
                 </div>
               )}
+              {config.turnstileSiteKey && !humanPass && (
+                <HumanCheck siteKey={config.turnstileSiteKey} onPass={passHuman} />
+              )}
               <div className="actions">
                 <button className="text-button" onClick={() => setStep(2)} disabled={busy}>
                   <ArrowLeft size={16} /> Back
                 </button>
-                <button className="button primary" onClick={submit} disabled={busy}>
+                <button
+                  className="button primary"
+                  onClick={submit}
+                  disabled={busy || (!!config.turnstileSiteKey && !humanPass)}
+                >
                   {busy && <span className="spinner" />}
                   {busy ? "Sending…" : "Send for printing"}
                 </button>

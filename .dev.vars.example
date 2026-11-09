@@ -1,3 +1,11 @@
 # Copy to .dev.vars for LOCAL Cloudflare development only.
-# In production, set this as a Secret in the Worker runtime settings.
+# In production, set these in the Worker's Settings → Variables and Secrets.
 TEACHER_PASSWORD=
+
+# Optional: Cloudflare Access in front of the staff pages (see DEPLOY-CLOUDFLARE.md).
+# ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+# ACCESS_AUD=
+
+# Optional: Turnstile robot check on uploads. These are Cloudflare's always-pass test keys.
+# TURNSTILE_SITE_KEY=1x00000000000000000000AA
+# TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

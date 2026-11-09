@@ -19,6 +19,7 @@ export interface Settings {
   colours: string[];
   customColourEnabled: boolean;
   extraFormats: string[];
+  requireClassCode?: boolean;
 }
 export interface Config {
   uploadMode?: string;
@@ -31,6 +32,10 @@ export interface Config {
   customColourEnabled: boolean;
   acceptedExtensions: string[];
   acceptingUploads: boolean;
+  uploadsPaused?: boolean;
+  requireClassCode?: boolean;
+  /** Set when the Turnstile robot check is turned on. */
+  turnstileSiteKey?: string;
   localDemo: boolean;
   maxBytes: number;
 }

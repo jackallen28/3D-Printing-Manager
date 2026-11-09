@@ -731,6 +731,11 @@ input[type="range"] {
   text-underline-offset: 3px;
   cursor: pointer;
 }
+.human-check .hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
 .model-facts {
   font-size: var(--text-xs);
   color: var(--text-subtle);
@@ -1730,6 +1735,17 @@ input[type="range"] {
   border: 0;
 }
 
+.paused-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.paused-banner b {
+  font-weight: 600;
+}
+
 /* Teacher: settings */
 .setup > * + * {
   margin-top: var(--s5);
@@ -1787,6 +1803,32 @@ input[type="range"] {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--s3) var(--s5);
+}
+.activity-list {
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow: auto;
+}
+.activity-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s1) var(--s4);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.activity-list li:last-child {
+  border-bottom: 0;
+}
+.activity-list b {
+  font-weight: 600;
+}
+.activity-list small {
+  color: var(--text-muted);
+}
+.activity-list li.failed b {
+  color: var(--warning);
 }
 .cleanup-status {
   display: flex;

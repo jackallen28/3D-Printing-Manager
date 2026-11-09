@@ -1,5 +1,10 @@
 import { isAppsScript } from "../platform";
 let csrf = "";
+// A signed pass from the Turnstile robot check, sent with each new upload when the check is on.
+let humanToken = "";
+export function setHumanToken(value: string) {
+  humanToken = value;
+}
 let uploadMode = "multipart";
 export function setUploadMode(value?: string) {
   uploadMode = value || "multipart";
@@ -134,6 +139,7 @@ async function cloudflareUpload(form: FormData, onProgress: (value: number) => v
     preview = form.get("preview") as File;
   const pending = await api("/uploads/init", {
     method: "POST",
+    headers: humanToken ? { "X-Human-Token": humanToken } : undefined,
     body: JSON.stringify({
       details: JSON.parse(String(form.get("details"))),
       name: model.name,

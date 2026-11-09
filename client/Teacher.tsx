@@ -33,6 +33,14 @@ interface AdminState {
   tokenPersisted: boolean;
   cleanupConfigured: boolean;
   cleanup: { lastRun: string | null; lastSuccess: string | null; error: string | null };
+  /** Cloudflare only. */
+  security?: {
+    accessEnabled: boolean;
+    accessEmail: string;
+    turnstileEnabled: boolean;
+    uploadsPaused: boolean;
+    activity: { at: string; event: string; detail: string; source: string }[];
+  };
 }
 const STATUSES = [
   { id: "queued", label: "Queued" },
@@ -57,6 +65,8 @@ export default function Teacher() {
     [sort, setSort] = useState("newest"),
     [status, setStatus] = useState("all"),
     [colour, setColour] = useState("all");
+  const [pausing, setPausing] = useState(false),
+    [confirmDelete, setConfirmDelete] = useState(false);
   const [checkedIds, setCheckedIds] = useState<string[]>([]),
     [bulkStatus, setBulkStatus] = useState("printed"),
     [bulkMessage, setBulkMessage] = useState("");
@@ -66,6 +76,9 @@ export default function Teacher() {
     setCheckedIds([]);
     setBulkMessage("");
   }, [school, group, search, status, colour]);
+  useEffect(() => {
+    if (!checkedIds.length) setConfirmDelete(false);
+  }, [checkedIds.length]);
   const [selected, setSelected] = useState<PrintRecord | null>(null),
     [loaded, setLoaded] = useState<LoadedModel | null>(null),
     [previewError, setPreviewError] = useState(""),
@@ -275,6 +288,40 @@ export default function Teacher() {
       setError((error as Error).message);
     }
   };
+  const setPaused = async (paused: boolean) => {
+    setPausing(true);
+    setError("");
+    try {
+      await api("/admin/uploads", { method: "POST", body: JSON.stringify({ paused }) });
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPausing(false);
+    }
+  };
+  const deleteSelected = async () => {
+    setBusy(true);
+    setError("");
+    let deleted = 0;
+    try {
+      for (let i = 0; i < selectedFiles.length; i += 200) {
+        const result = await api("/admin/submissions/bulk-delete", {
+          method: "POST",
+          body: JSON.stringify({ ids: selectedFiles.slice(i, i + 200).map((r) => r.id) }),
+        });
+        deleted += result.deleted;
+      }
+      await refresh();
+      setCheckedIds([]);
+      setBulkMessage(`Deleted ${deleted} ${deleted === 1 ? "request" : "requests"}.`);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  };
   const updateSelected = async () => {
     setBusy(true);
     setError("");
@@ -339,10 +386,34 @@ export default function Teacher() {
       </div>
       <ErrorMessage message={error} />
       {admin?.localDemo && <div className="demo-banner">Local demo. Files are saved on this computer only.</div>}
+      {tab === "queue" && admin?.security?.uploadsPaused && (
+        <div className="notice paused-banner" role="status">
+          <span>
+            <b>Uploads are paused.</b> Students can’t send new files.
+          </span>
+          <button className="button secondary" disabled={pausing} onClick={() => setPaused(false)}>
+            {pausing && <span className="spinner" />} Resume uploads
+          </button>
+        </div>
+      )}
+      {tab === "queue" && bulkMessage && (
+        <p role="status" className="hint">
+          {bulkMessage}
+        </p>
+      )}
       {!admin ? (
         <QueueSkeleton />
       ) : tab === "settings" ? (
-        <Setup admin={admin} onSaved={refresh} />
+        <Setup
+          admin={admin}
+          onSaved={refresh}
+          onPause={setPaused}
+          pausing={pausing}
+          onSignedOut={() => {
+            setCsrf("");
+            setAuthenticated(false);
+          }}
+        />
       ) : !records.length ? (
         <div className="empty-state">
           <h2>No print requests yet</h2>
@@ -472,13 +543,29 @@ export default function Teacher() {
                 <button className="button secondary" disabled={busy} onClick={exportSelected}>
                   <Download size={16} /> Download ZIP
                 </button>
+                {admin.platform === "cloudflare" && (
+                  <button className="text-button danger-text" disabled={busy} onClick={() => setConfirmDelete(true)}>
+                    <Trash2 size={16} /> Delete
+                  </button>
+                )}
               </div>
             )}
           </div>
-          {bulkMessage && (
-            <p role="status" className="hint">
-              {bulkMessage}
-            </p>
+          {confirmDelete && selectedFiles.length > 0 && (
+            <div className="delete-confirm" role="alertdialog" aria-label="Confirm delete">
+              <p>
+                Delete {selectedFiles.length} {selectedFiles.length === 1 ? "request" : "requests"} and their files?
+                This can’t be undone.
+              </p>
+              <div className="button-row">
+                <button className="button danger" disabled={busy} onClick={deleteSelected}>
+                  {busy && <span className="spinner" />} Delete permanently
+                </button>
+                <button className="text-button" disabled={busy} onClick={() => setConfirmDelete(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
           {filtered.length ? (
             <ul className="file-grid">
@@ -770,7 +857,46 @@ function QueueSkeleton() {
   );
 }
 
-function Setup({ admin, onSaved }: { admin: AdminState; onSaved: () => Promise<void> }) {
+const EVENT_LABELS: Record<string, string> = {
+  sign_in: "Signed in",
+  sign_in_failed: "Wrong password",
+  sign_out: "Signed out",
+  signed_out_everywhere: "Signed out everywhere",
+  settings_saved: "Settings saved",
+  deleted: "Deleted",
+  uploads_paused: "Uploads paused",
+  uploads_resumed: "Uploads resumed",
+};
+const timeLabel = (iso: string) =>
+  new Intl.DateTimeFormat("en-AU", { dateStyle: "medium", timeStyle: "short", timeZone: "Australia/Melbourne" }).format(
+    new Date(iso),
+  );
+function Setup({
+  admin,
+  onSaved,
+  onPause,
+  pausing,
+  onSignedOut,
+}: {
+  admin: AdminState;
+  onSaved: () => Promise<void>;
+  onPause: (paused: boolean) => Promise<void>;
+  pausing: boolean;
+  onSignedOut: () => void;
+}) {
+  const [confirmSignOut, setConfirmSignOut] = useState(false),
+    [signingOut, setSigningOut] = useState(false);
+  const signOutEverywhere = async () => {
+    setSigningOut(true);
+    try {
+      await api("/admin/sign-out-everywhere", { method: "POST" });
+      onSignedOut();
+    } catch (e) {
+      setError((e as Error).message);
+      setSigningOut(false);
+    }
+  };
+  const security = admin.security;
   const [settings, setSettings] = useState<Settings>(admin.settings),
     [error, setError] = useState(""),
     [success, setSuccess] = useState(""),
@@ -877,6 +1003,32 @@ function Setup({ admin, onSaved }: { admin: AdminState; onSaved: () => Promise<v
   return (
     <div className="setup">
       <p className="lead">Choose what students see on the upload page. Changes apply when you save.</p>
+      {security && (
+        <section className="panel" aria-labelledby="uploads-heading">
+          <div className="panel-heading">
+            <h2 id="uploads-heading">Uploads</h2>
+            <span className={"status-badge " + (security.uploadsPaused ? "queued" : "printed")}>
+              {security.uploadsPaused ? "Paused" : "Open"}
+            </span>
+          </div>
+          <p className="hint">
+            {security.uploadsPaused
+              ? "Students can’t send new files. Uploads already in progress can finish."
+              : "Students can send files. If someone is sending spam, pause uploads straight away."}
+          </p>
+          <div className="button-row">
+            <button
+              className={"button " + (security.uploadsPaused ? "primary" : "secondary")}
+              disabled={pausing}
+              onClick={() => onPause(!security.uploadsPaused)}
+            >
+              {pausing && <span className="spinner" />}
+              {security.uploadsPaused ? "Resume uploads" : "Pause uploads"}
+            </button>
+            <span className="hint">This takes effect straight away. You don’t need to save.</span>
+          </div>
+        </section>
+      )}
       <section className="panel" aria-labelledby="storage-heading">
         <div className="panel-heading">
           <h2 id="storage-heading">{admin.platform === "cloudflare" ? "Storage" : "Google Drive storage"}</h2>
@@ -1116,6 +1268,30 @@ function Setup({ admin, onSaved }: { admin: AdminState; onSaved: () => Promise<v
           </button>
         </form>
         <ErrorMessage message={classError} />
+        {security && (
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={!!settings.requireClassCode}
+              onChange={(e) => patch({ requireClassCode: e.target.checked })}
+            />
+            <span>
+              Students must enter a class code to upload
+              <small>Stops people outside your classes from sending files.</small>
+            </span>
+          </label>
+        )}
+        {settings.requireClassCode &&
+          settings.schools.some((school) => !settings.classes.some((c) => c.schoolId === school.id)) && (
+            <p className="notice">
+              Students from{" "}
+              {settings.schools
+                .filter((school) => !settings.classes.some((c) => c.schoolId === school.id))
+                .map((school) => school.name)
+                .join(", ")}{" "}
+              can’t upload until you add a class for their school.
+            </p>
+          )}
       </section>
       <section className="panel" aria-labelledby="colours-heading">
         <h2 id="colours-heading">Colours in stock</h2>
@@ -1229,6 +1405,82 @@ function Setup({ admin, onSaved }: { admin: AdminState; onSaved: () => Promise<v
         </div>
         {admin.cleanup.error && <ErrorMessage message={admin.cleanup.error} />}
       </section>
+      {security && (
+        <section className="panel" aria-labelledby="security-heading">
+          <h2 id="security-heading">Security</h2>
+          <dl className="summary-list">
+            <div>
+              <dt>Staff sign-in</dt>
+              <dd>
+                {security.accessEnabled
+                  ? `School account and password${security.accessEmail ? ` · you’re signed in as ${security.accessEmail}` : ""}`
+                  : "Password only"}
+                {!security.accessEnabled && (
+                  <small>Turn on Cloudflare Access so staff also sign in with their school account.</small>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Robot check</dt>
+              <dd>
+                {security.turnstileEnabled ? "On for new uploads" : "Off"}
+                {!security.turnstileEnabled && <small>Turn on Cloudflare Turnstile to block automated uploads.</small>}
+              </dd>
+            </div>
+            <div>
+              <dt>Upload limits</dt>
+              <dd>
+                Each network: 150 files and 3 GB an hour, 20 in progress at once. Whole site: 400 files an hour and 6 GB
+                a day.
+              </dd>
+            </div>
+            <div>
+              <dt>Wrong passwords</dt>
+              <dd>Sign-in is blocked for 15 minutes after 5 wrong passwords from the same network.</dd>
+            </div>
+          </dl>
+          <p className="hint">The deployment guide explains how to turn on Cloudflare Access and Turnstile.</p>
+          <h3>Recent activity</h3>
+          {security.activity.length ? (
+            <ul className="activity-list">
+              {security.activity.map((row, i) => (
+                <li key={i} className={row.event === "sign_in_failed" ? "failed" : undefined}>
+                  <span>
+                    <b>{EVENT_LABELS[row.event] || row.event}</b>
+                    {row.detail && <span> · {row.detail}</span>}
+                  </span>
+                  <small>
+                    {timeLabel(row.at)}
+                    {row.source && ` · network ${row.source}`}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="hint">Nothing yet.</p>
+          )}
+          {confirmSignOut ? (
+            <div className="delete-confirm" role="alertdialog" aria-label="Confirm sign out everywhere">
+              <p>This signs out every device, including this one. Everyone will need to sign in again.</p>
+              <div className="button-row">
+                <button className="button danger" disabled={signingOut} onClick={signOutEverywhere}>
+                  {signingOut && <span className="spinner" />} Sign out everywhere
+                </button>
+                <button className="text-button" disabled={signingOut} onClick={() => setConfirmSignOut(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="button-row">
+              <button className="button secondary" onClick={() => setConfirmSignOut(true)}>
+                <LogOut size={16} /> Sign out everywhere
+              </button>
+              <span className="hint">Use this if the password may have been shared.</span>
+            </div>
+          )}
+        </section>
+      )}
       {!isAppsScript && (
         <section className="panel" aria-labelledby="examples-heading">
           <h2 id="examples-heading">Test files</h2>

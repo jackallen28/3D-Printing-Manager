@@ -1,36 +1,145 @@
-import { mkdtemp } from 'node:fs/promises';
-process.env.STORAGE_MODE='local';process.env.NODE_ENV='test';process.env.PORT='4173';process.env.TEACHER_PASSWORD='local-demo-teacher-password';process.env.SESSION_SECRET='test-only-session-secret-with-at-least-32-characters';process.env.CLEANUP_SECRET='test-only-cleanup-secret';process.env.LOCAL_DATA_DIR=await mkdtemp('/tmp/bnts-e2e-');
-const {default:express}=await import('express');
-const {readFile}=await import('node:fs/promises');
-const {createApp}=await import('../server/app.js');
-const {LocalStore}=await import('../server/storage.js');
-const {gasHarness}=await import('./gas-harness.js');
-const {details}=await import('./fixtures.js');
-const {BAMBU_COLOURS}=await import('../shared/catalog.js');
-const gas=gasHarness();
-const session=gas.api({path:'/admin/login',method:'POST',body:{password:'local-demo-teacher-password'}}).data;
-gas.api({...session,path:'/admin/settings',method:'PUT',body:{folderId:'root-folder-123456',schools:[{id:details().schoolId,name:'School A'}],staff:[{id:details().staffId,name:'Alex'}],classes:[],colours:BAMBU_COLOURS.map(c=>c.id),customColourEnabled:true}});
-const store=new LocalStore(process.env.LOCAL_DATA_DIR);await store.init();
-const {app}=createApp({store,password:process.env.TEACHER_PASSWORD,secret:process.env.SESSION_SECRET,cleanupSecret:process.env.CLEANUP_SECRET});
-const testServer=express();
-testServer.post('/__gas/rpc',express.json({limit:'20mb'}),(req,res)=>res.json(gas.api(req.body)));
-testServer.get('/__gas',async(req,res)=>{
- const bootstrap = `<script>window.google={script:{get run(){const handlers={};return {withSuccessHandler(fn){handlers.success=fn;return this;},withFailureHandler(fn){handlers.failure=fn;return this;},bntsApi(request){fetch('/__gas/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)}).then(r=>r.json()).then(r=>handlers.success(r)).catch(e=>handlers.failure(e));}};}}};</script>`;
- const html=(await readFile('apps-script/Index.html','utf8')).replace('<?!= bootJson ?>',JSON.stringify({baseUrl:'http://127.0.0.1:4173/__gas',teacher:req.query.page==='teacher'})).replace('<head>','<head>'+bootstrap);
- res.type('html').send(html);
+import { mkdtemp } from "node:fs/promises";
+process.env.STORAGE_MODE = "local";
+process.env.NODE_ENV = "test";
+process.env.PORT = "4173";
+process.env.TEACHER_PASSWORD = "local-demo-teacher-password";
+process.env.SESSION_SECRET = "test-only-session-secret-with-at-least-32-characters";
+process.env.CLEANUP_SECRET = "test-only-cleanup-secret";
+process.env.LOCAL_DATA_DIR = await mkdtemp("/tmp/bnts-e2e-");
+const { default: express } = await import("express");
+const { readFile } = await import("node:fs/promises");
+const { createApp } = await import("../server/app.js");
+const { LocalStore } = await import("../server/storage.js");
+const { gasHarness } = await import("./gas-harness.js");
+const { details } = await import("./fixtures.js");
+const { BAMBU_COLOURS } = await import("../shared/catalog.js");
+const gas = gasHarness();
+const session = gas.api({
+  path: "/admin/login",
+  method: "POST",
+  body: { password: "local-demo-teacher-password" },
+}).data;
+gas.api({
+  ...session,
+  path: "/admin/settings",
+  method: "PUT",
+  body: {
+    folderId: "root-folder-123456",
+    schools: [{ id: details().schoolId, name: "School A" }],
+    staff: [{ id: details().staffId, name: "Alex" }],
+    classes: [],
+    colours: BAMBU_COLOURS.map((c) => c.id),
+    customColourEnabled: true,
+  },
 });
-testServer.get('/__gas-frame',(req,res)=>res.type('html').send(`<html><body style="margin:0"><iframe title="Apps Script app" style="width:100%;height:100vh;border:0" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads allow-forms" src="/__gas${req.query.teacher?'?page=teacher':''}"></iframe></body></html>`));
-const {Miniflare}=await import('miniflare');
-const {initialiseDatabase}=await import('../cloudflare/schema.js');
-const {DEFAULT_SETTINGS}=await import('../shared/catalog.js');
-const mime={'.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.html':'text/html'};
-const {default:nodePath}=await import('node:path');
-const cf=new Miniflare({host:'127.0.0.1',port:4174,modules:true,scriptPath:'.cloudflare-build/worker.js',compatibilityDate:'2026-06-01',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],r2Buckets:['PRINTS'],bindings:{TEACHER_PASSWORD:'local-demo-teacher-password'},serviceBindings:{ASSETS:async request=>{
- const pathname=new URL(request.url).pathname;let name=pathname.startsWith('/assets/')||pathname==='/bnts-pixels.svg'?'.'+pathname:'./index.html';
- try{return new Response(await readFile(nodePath.join('dist',name)),{headers:{'Content-Type':mime[nodePath.extname(name)]||'application/octet-stream'}});}catch{return new Response('Not found',{status:404});}
-}}});
-await cf.ready;const cfDb=await cf.getD1Database('DB');await initialiseDatabase(cfDb);
-await cfDb.prepare('INSERT INTO app_meta(key,value) VALUES (?,?)').bind('settings',JSON.stringify({...DEFAULT_SETTINGS,folderId:'',schools:[{id:details().schoolId,name:'School A'}],staff:[{id:details().staffId,name:'Alex'}],colours:BAMBU_COLOURS.map(c=>c.id)})).run();
-testServer.post('/__cf-test/expire/:id',async(req,res)=>{await cfDb.prepare('UPDATE submissions SET expires_at=? WHERE id=?').bind(Date.now()-1000,req.params.id).run();res.json({ok:true});});
-testServer.use(app);testServer.listen(4173,'127.0.0.1');
-process.on('SIGTERM',()=>{cf.dispose().finally(()=>process.exit(0));});
+const store = new LocalStore(process.env.LOCAL_DATA_DIR);
+await store.init();
+const { app } = createApp({
+  store,
+  password: process.env.TEACHER_PASSWORD,
+  secret: process.env.SESSION_SECRET,
+  cleanupSecret: process.env.CLEANUP_SECRET,
+});
+const testServer = express();
+testServer.post("/__gas/rpc", express.json({ limit: "20mb" }), (req, res) => res.json(gas.api(req.body)));
+testServer.get("/__gas", async (req, res) => {
+  const bootstrap = `<script>window.google={script:{get run(){const handlers={};return {withSuccessHandler(fn){handlers.success=fn;return this;},withFailureHandler(fn){handlers.failure=fn;return this;},bntsApi(request){fetch('/__gas/rpc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)}).then(r=>r.json()).then(r=>handlers.success(r)).catch(e=>handlers.failure(e));}};}}};</script>`;
+  const html = (await readFile("apps-script/Index.html", "utf8"))
+    .replace(
+      "<?!= bootJson ?>",
+      JSON.stringify({ baseUrl: "http://127.0.0.1:4173/__gas", teacher: req.query.page === "teacher" }),
+    )
+    .replace("<head>", "<head>" + bootstrap);
+  res.type("html").send(html);
+});
+testServer.get("/__gas-frame", (req, res) =>
+  res
+    .type("html")
+    .send(
+      `<html><body style="margin:0"><iframe title="Apps Script app" style="width:100%;height:100vh;border:0" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads allow-forms" src="/__gas${req.query.teacher ? "?page=teacher" : ""}"></iframe></body></html>`,
+    ),
+);
+const { Miniflare } = await import("miniflare");
+const { initialiseDatabase } = await import("../cloudflare/schema.js");
+const { DEFAULT_SETTINGS } = await import("../shared/catalog.js");
+const mime = { ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".html": "text/html" };
+const { default: nodePath } = await import("node:path");
+// Serves the built client, standing in for Cloudflare's static assets.
+async function cfServiceAsset(request) {
+  const pathname = new URL(request.url).pathname;
+  let name = pathname.startsWith("/assets/") || pathname === "/bnts-pixels.svg" ? "." + pathname : "./index.html";
+  try {
+    return new Response(await readFile(nodePath.join("dist", name)), {
+      headers: { "Content-Type": mime[nodePath.extname(name)] || "application/octet-stream" },
+    });
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
+}
+const cf = new Miniflare({
+  host: "127.0.0.1",
+  port: 4174,
+  modules: true,
+  scriptPath: ".cloudflare-build/worker.js",
+  compatibilityDate: "2026-06-01",
+  compatibilityFlags: ["nodejs_compat"],
+  d1Databases: ["DB"],
+  r2Buckets: ["PRINTS"],
+  bindings: { TEACHER_PASSWORD: "local-demo-teacher-password" },
+  serviceBindings: { ASSETS: (request) => cfServiceAsset(request) },
+});
+await cf.ready;
+// A second Worker with the Turnstile robot check turned on. Verification is answered locally:
+// the token "pass" succeeds, anything else fails.
+const cfTurnstile = new Miniflare({
+  host: "127.0.0.1",
+  port: 4175,
+  modules: true,
+  scriptPath: ".cloudflare-build/worker.js",
+  compatibilityDate: "2026-06-01",
+  compatibilityFlags: ["nodejs_compat"],
+  d1Databases: ["DB"],
+  r2Buckets: ["PRINTS"],
+  bindings: {
+    TEACHER_PASSWORD: "local-demo-teacher-password",
+    TURNSTILE_SITE_KEY: "e2e-site-key",
+    TURNSTILE_SECRET_KEY: "e2e-secret",
+  },
+  outboundService: async (request) => {
+    if (!request.url.startsWith("https://challenges.cloudflare.com/turnstile/v0/siteverify"))
+      return new Response("Not found", { status: 404 });
+    const form = await request.formData();
+    return Response.json({ success: form.get("response") === "pass" && form.get("secret") === "e2e-secret" });
+  },
+  serviceBindings: { ASSETS: (request) => cfServiceAsset(request) },
+});
+await cfTurnstile.ready;
+const cfDb = await cf.getD1Database("DB");
+for (const db of [cfDb, await cfTurnstile.getD1Database("DB")]) {
+  await initialiseDatabase(db);
+  await db
+    .prepare("INSERT INTO app_meta(key,value) VALUES (?,?)")
+    .bind(
+      "settings",
+      JSON.stringify({
+        ...DEFAULT_SETTINGS,
+        folderId: "",
+        schools: [{ id: details().schoolId, name: "School A" }],
+        staff: [{ id: details().staffId, name: "Alex" }],
+        colours: BAMBU_COLOURS.map((c) => c.id),
+      }),
+    )
+    .run();
+}
+testServer.post("/__cf-test/expire/:id", async (req, res) => {
+  await cfDb
+    .prepare("UPDATE submissions SET expires_at=? WHERE id=?")
+    .bind(Date.now() - 1000, req.params.id)
+    .run();
+  res.json({ ok: true });
+});
+testServer.use(app);
+testServer.listen(4173, "127.0.0.1");
+process.on("SIGTERM", () => {
+  Promise.all([cf.dispose(), cfTurnstile.dispose()]).finally(() => process.exit(0));
+});

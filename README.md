@@ -53,6 +53,12 @@ Open `/teacher` and sign in with the staff password configured in Cloudflare. No
 
 There is no Google connection screen on the Cloudflare deployment. Student uploads become available after the teacher has added at least one school and teacher and saved settings.
 
+## Security
+
+The site is public, so the Worker defends both the teacher console and the upload path. Built in: a wrong-password lockout (5 per network per 15 minutes, 200 an hour site-wide; correct sign-ins never count), `__Host-` HttpOnly session cookies with CSRF tokens, **Sign out everywhere**, a 30-day activity log, upload limits sized for school networks (per network: 150 files and 3 GB an hour, 20 unfinished uploads at once; site-wide: 400 files an hour and 6 GB a day; IPv6 grouped by /64), an instant **Pause uploads** switch, an optional **class code required** rule, bulk delete, and strict security headers. Networks are stored only as salted one-way codes.
+
+Two free Cloudflare features are strongly recommended and switch on with environment variables: **Cloudflare Access** (`ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`) adds school-account sign-in in front of the staff pages and also covers the `workers.dev` address; **Turnstile** (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`) adds a mostly invisible robot check to uploads. Setup steps and an incident checklist are in [Protect the site](DEPLOY-CLOUDFLARE.md#6-protect-the-site).
+
 ## Storage and retention
 
 Cloudflare provides the site/worker, a private **R2** bucket for originals/thumbnails, and a private **D1** database for settings, submission details, upload reservations and short-lived security records. Bindings are provisioned automatically on deployment. Database tables initialise automatically. No separate storage access keys are needed.

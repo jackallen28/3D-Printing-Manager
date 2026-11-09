@@ -53,17 +53,68 @@ No GitHub Actions scheduler or Render service is needed. If a previous Render de
 
 ## 5. Test before sharing
 
-1. On the student page, check that it says **Up to 50 MB per file**.
+1. On the student page, check that it says **Up to 50 MB.** under the upload box.
 2. Upload a small STL, adjust its scale, check the dimensions in mm, try Test print and the grey support preview when available, choose a colour, and submit it with a first name, school and staff member. Enter a class code if one is provided, or leave it blank.
 3. Find it in `/teacher`, check its saved scale/colours, open the preview and download the original. Check the highlighted areas. You can also select several files to download ZIPs or change their status; large selections show separate ZIP download buttons.
 4. Check that it appears under the expected school/date/class prefix in the private R2 bucket.
 5. In **Find your uploads** at the bottom of the student page, select the same school and type the same first name. Open the model.
 6. Try a file containing two separate objects. Choose **Split into separate files**, set different colours or copy counts, and check that both submissions retain their own settings.
-7. Delete the test submission in the teacher console. Repeat the home lookup; it should say **“This has been deleted.”**
+7. Delete the test submission in the teacher console. Repeat the lookup; it should say no files were found.
 
 School + first name is deliberately a simple lookup. Anyone with those details can view matching models, and students with identical first names at the same school see the same results. Staff notes, generated filenames and other submission details are not returned. Do not upload private material. The teacher console remains separately password protected.
 
 Share the normal `workers.dev` URL with students. Keep `/teacher` and its password for staff. You can add a custom domain later without changing the storage bindings.
+
+Before sharing widely, read [Protect the site](#6-protect-the-site).
+
+## 6. Protect the site
+
+The site is public, so expect automated sign-in attempts and spam uploads. These protections are built in and need no setup:
+
+| Protection | What it does |
+| --- | --- |
+| Wrong-password lockout | 5 wrong passwords from one network blocks sign-in from that network for 15 minutes. 200 wrong passwords an hour across the whole site blocks all sign-ins for the rest of that hour. Correct sign-ins never count. Each wrong attempt also waits 0.4 seconds. |
+| Sessions | Signed, HttpOnly, `__Host-` cookies that last 8 hours, with a CSRF token on every change. **Settings → Security → Sign out everywhere** ends every session at once. Changing `TEACHER_PASSWORD` does the same. |
+| Activity log | **Settings → Security** lists sign-ins, wrong passwords, deletions, setting changes and upload pauses for 30 days. Each row shows a short network code, so you can tell whether attempts come from one place or many. Raw IP addresses and student names are never stored in it. |
+| Upload limits | Each network: 150 files and 3 GB an hour, and 20 unfinished uploads at once. Whole site: 400 files an hour and 6 GB a day. A whole class sharing a school's internet connection stays well inside these. IPv6 addresses are grouped by /64, so one connection can't dodge the limits by changing address. Retrying or resuming an upload never counts twice. |
+| Pause uploads | **Settings → Uploads → Pause uploads** stops new uploads straight away, with no save needed. Students see a clear message. |
+| Class code required | **Settings → Classes → Students must enter a class code to upload**. Only people with a code from a teacher can send files. Every school needs at least one class. |
+| Bulk delete | Select requests in the queue and choose **Delete** to remove spam and its files together. |
+| Headers | Content Security Policy, HSTS, `X-Frame-Options: DENY`, Permissions-Policy and cross-origin isolation on every page. |
+
+### Recommended: Cloudflare Access for staff (free)
+
+With Access on, staff sign in with their school email (a one-time code, or Google/Microsoft sign-in) before they even see the password box. A leaked password alone is then useless, and the activity log records who signed in. Access is free for up to 50 users.
+
+1. In the Cloudflare dashboard, open **Zero Trust → Access → Applications → Add an application → Self-hosted**.
+2. Add the public hostname of your site twice: once with path `teacher` and once with path `api/admin/*`. If you use a custom domain, add the same two paths for the `workers.dev` hostname too, or turn the `workers.dev` route off under **Workers → your Worker → Settings → Domains & Routes**.
+3. Add a policy: **Action: Allow**, **Include: Emails ending in** `@your-school-domain` (or list each staff email).
+4. Save, then copy the application's **Audience (AUD) tag**. Your team domain is shown under **Zero Trust → Settings → Custom pages**, for example `bnts.cloudflareaccess.com`.
+5. In **Workers → your Worker → Settings → Variables and Secrets**, add `ACCESS_TEAM_DOMAIN` (the team domain) and `ACCESS_AUD` (the tag), then deploy.
+
+Set up the Access application (steps 1 to 4) **before** adding the two variables. Once they're set, the Worker refuses staff pages without a valid Access token, which also protects the `workers.dev` address that Access rules on a custom domain don't cover. **Settings → Security** then shows "School account and password".
+
+### Recommended: Turnstile robot check on uploads (free)
+
+Turnstile is Cloudflare's CAPTCHA replacement. Most students never see it; it only asks for a click when a visitor looks automated. One check covers every file in a request for 30 minutes.
+
+1. In the Cloudflare dashboard, open **Turnstile → Add widget**. Add your site's hostnames, including the `workers.dev` one, and choose **Managed** mode.
+2. In the Worker's **Variables and Secrets**, add `TURNSTILE_SITE_KEY` (a plain variable) and `TURNSTILE_SECRET_KEY` (a **Secret**), then deploy.
+3. Send a test upload. **Settings → Security** should show "Robot check: On for new uploads".
+
+To try it without real keys, use Cloudflare's test keys: site key `1x00000000000000000000AA` with secret `1x0000000000000000000000000000000AA` always pass. Remove both variables to turn the check off.
+
+### Optional: a dashboard rate-limiting rule
+
+If the site uses a custom domain on a Cloudflare zone, **Security → WAF → Rate limiting rules** can block abusive traffic before it reaches the Worker. The free plan includes one rule. A good one: URI path equals `/api/admin/login`, more than 10 requests in 10 seconds from the same IP, block for 10 seconds. **Security → Bots → Bot Fight Mode** adds further protection. Neither is needed for the built-in limits to work.
+
+### If the site is under attack
+
+1. **Settings → Uploads → Pause uploads.**
+2. **Settings → Security → Sign out everywhere**, then change `TEACHER_PASSWORD` in the Worker's secrets.
+3. In the queue, search for the spam, select it and choose **Delete**.
+4. Check **Settings → Security → Recent activity** to see what happened and from how many networks.
+5. Turn on Cloudflare Access and Turnstile if they aren't already on, then resume uploads.
 
 ## Updates
 

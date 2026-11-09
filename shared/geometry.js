@@ -1,4 +1,4 @@
-import {measureThickness,thinFeatures} from './thickness.js';
+import {measurePrintFeatures,thinFeatures} from './thickness.js';
 /** Analyse world-space, Z-up, non-indexed triangles. Advisory checks, not a slicer.
  * @param {Float32Array} positions
  * @param {{format?: string}} options
@@ -12,7 +12,7 @@ export function analyseGeometry(positions, options = {}) {
   const dimensions = max.map((v,i) => v-min[i]);
   if (!triangles || dimensions.every(x => x < 0.001)) throw new Error('No printable geometry was found.');
   const warnings = dimensionWarnings(dimensions);
-  if (triangles > 200000) return { dimensions, triangles, components: 0, floating: 0, openEdges: 0, nonManifold: 0, degenerate: 0, overhangs: 0, partBounds:[],thicknessSamples:[],floatingParts:[],problemEdges:new Float32Array(),overhangTriangles:new Uint32Array(),floatingTriangles: new Uint32Array(), triangleParts: new Uint32Array(), complete: false, notices, warnings: [...warnings, { code: 'complex', title: 'Detailed checks not completed', detail: 'This model has over 200,000 triangles. The preview works, but staff must check disconnected parts and mesh errors in the slicer.' }] };
+  if (triangles > 200000) return { dimensions, triangles, components: 0, floating: 0, openEdges: 0, nonManifold: 0, degenerate: 0, overhangs: 0, partBounds:[],thicknessSamples:[],supportContacts:[],floatingParts:[],problemEdges:new Float32Array(),overhangTriangles:new Uint32Array(),floatingTriangles: new Uint32Array(), triangleParts: new Uint32Array(), complete: false, notices, warnings: [...warnings, { code: 'complex', title: 'Detailed checks not completed', detail: 'This model has over 200,000 triangles. The preview works, but staff must check disconnected parts and mesh errors in the slicer.' }] };
   const parents = new Int32Array(triangles); for (let i=0;i<triangles;i++) parents[i]=i;
   const find = x => { while (parents[x] !== x) { parents[x] = parents[parents[x]]; x = parents[x]; } return x; };
   const join = (a,b) => { const x=find(a),y=find(b); if(x!==y) parents[x]=y; };
@@ -60,10 +60,10 @@ export function analyseGeometry(positions, options = {}) {
   if(meshWarning)for(const[key,count]of edges){if(count!==2&&problemEdges.length<30000){const[a,b]=key.split(',').map(Number);problemEdges.push(...coordinates.slice(a*3,a*3+3),...coordinates.slice(b*3,b*3+3));}}
   if(meshWarning)warnings.push({code:'mesh',title:isObj?'Check the OBJ surfaces':'The mesh may need repairing',detail:isObj?'Many outer edges are open. Ask staff to check that the model is suitable for printing.':`${openEdges.toLocaleString()} open edges and ${nonManifold.toLocaleString()} non-manifold edges found. Re-export a solid, or ask staff to repair it.`});
   if(isObj?degenerate>=Math.max(10,triangles*0.01):degenerate)warnings.push({code:'degenerate',title:'Some triangles have no area',detail:'The CAD export contains degenerate triangles. Re-export or ask staff to check the mesh.'});
-  if(overhangs&&!isObj)warnings.push({code:'overhang',title:'Some areas may need supports',detail:'Downward-facing surfaces were found above the build plate. Staff will check these in the slicer.'});
-  const partBounds=[...parts.values()],thicknessSamples=isObj?[]:measureThickness(positions,triangleParts);
+  const partBounds=[...parts.values()],{thicknessSamples,supportContacts}=measurePrintFeatures(positions,triangleParts,overhangTriangles,min[2],!isObj);
+  if(supportContacts.length)notices.push({code:'supports',title:'About supports',detail:'Supports hold up overhanging areas while they print. They are removed afterwards and may leave a rough underside.'});
   if(!isObj)warnings.push(...thinFeatures(thicknessSamples,partBounds,triangleParts).warnings);
-  return {dimensions,triangles,components:parts.size,floating:floatingIds.size,openEdges,nonManifold,degenerate,overhangs,partBounds,thicknessSamples,problemEdges:new Float32Array(problemEdges),overhangTriangles:new Uint32Array(isObj?[]:overhangTriangles),floatingParts:[...floatingIds].map(id=>partNumbers.get(id)),floatingTriangles:new Uint32Array(floatingTriangles),triangleParts,complete:true,warnings,notices};
+  return {dimensions,triangles,components:parts.size,floating:floatingIds.size,openEdges,nonManifold,degenerate,overhangs,partBounds,thicknessSamples,supportContacts,problemEdges:new Float32Array(problemEdges),overhangTriangles:new Uint32Array([...new Set(supportContacts.map(contact=>contact.triangle))]),floatingParts:[...floatingIds].map(id=>partNumbers.get(id)),floatingTriangles:new Uint32Array(floatingTriangles),triangleParts,complete:true,warnings,notices};
 }
 
 /** @param {number[]} dimensions */

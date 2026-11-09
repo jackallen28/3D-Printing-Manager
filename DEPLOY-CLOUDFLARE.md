@@ -54,11 +54,12 @@ No GitHub Actions scheduler or Render service is needed. If a previous Render de
 ## 5. Test before sharing
 
 1. On the student page, check that it says **Up to 50 MB per file**.
-2. Upload a small STL, adjust its scale, check the dimensions in mm, try Test print, choose a colour, and submit it with a first name, school and staff member. Enter a class code if one is provided, or leave it blank.
+2. Upload a small STL, adjust its scale, check the dimensions in mm, try Test print and the grey support preview when available, choose a colour, and submit it with a first name, school and staff member. Enter a class code if one is provided, or leave it blank.
 3. Find it in `/teacher`, check its saved scale/colours, open the preview and download the original. Check the highlighted areas. You can also select several files to download ZIPs or change their status; large selections show separate ZIP download buttons.
 4. Check that it appears under the expected school/date/class prefix in the private R2 bucket.
 5. In **View at home** at the bottom of the student page, select the same school and type the same first name. Open the model.
-6. Delete the test submission in the teacher console. Repeat the home lookup; it should say **“This has been deleted.”**
+6. Try a file containing two separate objects. Choose **Convert to separate files**, set different colours or copy counts, and check that both submissions retain their own settings.
+7. Delete the test submission in the teacher console. Repeat the home lookup; it should say **“This has been deleted.”**
 
 School + first name is deliberately a simple lookup. Anyone with those details can view matching models, and students with identical first names at the same school see the same results. Staff notes, generated filenames and other submission details are not returned. Do not upload private material. The teacher console remains separately password protected.
 

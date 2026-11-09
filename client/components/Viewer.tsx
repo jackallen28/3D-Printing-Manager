@@ -4,11 +4,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Home, Box, ScanLine, Move, Layers3, Ruler } from 'lucide-react';
 import { addGlitterShader } from '../lib/glitter';
 import {animatePrint,type PrintProgress} from '../lib/print-animation';
+import {buildSupportPreview} from '../lib/support-preview';
 import {thinFeatures} from '../../shared/thickness.js';
 import type { LoadedModel } from '../lib/model';
 import type { Analysis } from '../types';
 export interface ViewerHandle { snapshot: () => Promise<Blob>; testPrint:()=>Promise<boolean>; stopTestPrint:()=>void; }
-export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: Analysis; mapping?: Record<string,string>; scalePercent?:number; advancedSources?:string[]; onPartSelect?:(source:string)=>void; compact?: boolean }>(({model, analysis, mapping={}, scalePercent=100, advancedSources=[], onPartSelect, compact}, ref) => {
+export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: Analysis; mapping?: Record<string,string>; scalePercent?:number; advancedSources?:string[]; onPartSelect?:(source:string)=>void; supportsVisible?:boolean; onSupportsChange?:(visible:boolean)=>void; compact?: boolean }>(({model, analysis, mapping={}, scalePercent=100, advancedSources=[], onPartSelect, supportsVisible, onSupportsChange, compact}, ref) => {
   const partCallback=useRef(onPartSelect);partCallback.current=onPartSelect;
   const scaleRef=useRef(scalePercent);scaleRef.current=scalePercent;
   const [baseDimensions,setBaseDimensions]=useState<number[]>([]);
@@ -17,6 +18,7 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
   const [error,setError]=useState('');const [wireframe,setWireframe]=useState(false),[highlight,setHighlight]=useState(true),[showParts,setShowParts]=useState(true),[showThin,setShowThin]=useState(true);
   const [printProgress,setPrintProgress]=useState<PrintProgress|null>(null);
   const animation=useRef<ReturnType<typeof animatePrint>|null>(null);
+  const [localSupports,setLocalSupports]=useState(false);const supportShown=supportsVisible??localSupports;const toggleSupports=()=>onSupportsChange?onSupportsChange(!supportShown):setLocalSupports(!supportShown);
   const thin=useMemo(()=>analysis&&model.format!=='obj'?thinFeatures(analysis.thicknessSamples,analysis.partBounds,analysis.triangleParts,scalePercent):{triangles:new Uint32Array()},[analysis,model.format,scalePercent]);
   useImperativeHandle(ref,()=>({
     snapshot:()=>new Promise((resolve,reject)=>{
@@ -67,7 +69,7 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
     runtime.current={renderer,camera,scene,object,root:rotate,size,controls,render,reset,overlays:[]};
     // Overlay uses the same world coordinates as analysis, before the preview's centring transform.
     runtime.current.object.userData.content=content;
-    return()=>{animation.current?.stop();animation.current=null;observer.disconnect();controls.dispose();scene.traverse(n=>{if(n instanceof THREE.Mesh||n instanceof THREE.LineSegments){n.geometry.dispose();const materials=Array.isArray(n.material)?n.material:[n.material];materials.forEach(m=>m.dispose());}});renderer.dispose();renderer.domElement.remove();runtime.current=null;};
+    return()=>{animation.current?.stop();animation.current=null;observer.disconnect();controls.dispose();scene.traverse(n=>{if(n instanceof THREE.Mesh||n instanceof THREE.LineSegments||n instanceof THREE.Points){n.geometry.dispose();const materials=Array.isArray(n.material)?n.material:[n.material];materials.forEach(m=>m.dispose());}});renderer.dispose();renderer.domElement.remove();runtime.current=null;};
   },[model]);
   useEffect(()=>{
     const r=runtime.current;if(!r)return;
@@ -82,23 +84,28 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
   useEffect(()=>{const r=runtime.current;if(!r)return;r.root.scale.setScalar(scalePercent/100);r.controls.target.set(0,r.size.z*0.5*scalePercent/100,0);r.controls.update();r.render();},[scalePercent,model]);
   useEffect(()=>{
     const r=runtime.current;if(!r)return;const content=r.object.userData.content as THREE.Group;
-    const dispose=(root:THREE.Object3D)=>root.traverse(node=>{if(node instanceof THREE.Mesh||node instanceof THREE.LineSegments){node.geometry.dispose();(Array.isArray(node.material)?node.material:[node.material]).forEach(m=>m.dispose());}});
+    const dispose=(root:THREE.Object3D)=>root.traverse(node=>{if(node instanceof THREE.Mesh||node instanceof THREE.LineSegments||node instanceof THREE.Points){node.geometry.dispose();(Array.isArray(node.material)?node.material:[node.material]).forEach(m=>m.dispose());}});
     for(const overlay of r.overlays){content.remove(overlay);dispose(overlay);}r.overlays=[];
-    const faces=(triangles:Uint32Array,colour:string,visible:boolean)=>{
+    const faces=(triangles:Uint32Array,colour:string,visible:boolean,opacity=0.75)=>{
       if(!triangles.length)return;const positions=new Float32Array(triangles.length*9);triangles.forEach((triangle,i)=>positions.set(model.positions.subarray(triangle*9,triangle*9+9),i*9));
-      const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));const mesh=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:colour,transparent:true,opacity:0.75,side:THREE.DoubleSide,depthTest:false}));mesh.visible=visible;mesh.renderOrder=10;content.add(mesh);r.overlays.push(mesh);
+      const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));const mesh=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:colour,transparent:true,opacity,side:THREE.DoubleSide,depthTest:false}));mesh.visible=visible;mesh.renderOrder=10;content.add(mesh);r.overlays.push(mesh);
     };
     if(analysis){
-      faces(analysis.overhangTriangles,'#82baff',true);faces(analysis.floatingTriangles,'#ff716c',highlight);faces(thin.triangles,'#ffc153',showThin);if(analysis.problemEdges.length){const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(analysis.problemEdges,3));const edges=new THREE.LineSegments(geometry,new THREE.LineBasicMaterial({color:'#ff716c',depthTest:false}));edges.renderOrder=12;content.add(edges);r.overlays.push(edges);}
+      faces(analysis.overhangTriangles,'#a6adb3',true,0.4);if(supportShown&&analysis.supportContacts.length){const supports=buildSupportPreview(analysis.supportContacts);content.add(supports);r.overlays.push(supports);}faces(analysis.floatingTriangles,'#ff716c',highlight);faces(thin.triangles,'#ffc153',showThin);if(analysis.problemEdges.length){const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(analysis.problemEdges,3));const edges=new THREE.LineSegments(geometry,new THREE.LineBasicMaterial({color:'#ff716c',depthTest:false}));edges.renderOrder=12;content.add(edges);r.overlays.push(edges);}
       if(analysis.components>1&&analysis.components<=64){const boxes=new THREE.Group();analysis.partBounds.forEach((part,index)=>{const bounds=new THREE.Box3(new THREE.Vector3(...part.min),new THREE.Vector3(...part.max));bounds.expandByScalar(0.15);const colour=analysis.floatingParts.includes(index)?'#ff716c':new THREE.Color().setHSL((index*0.618+0.45)%1,0.7,0.65);boxes.add(new THREE.Box3Helper(bounds,colour));});boxes.visible=showParts;content.add(boxes);r.overlays.push(boxes);}
     }
     r.render();
-  },[analysis,highlight,showParts,showThin,thin,model]);
-  return <div className={'viewer '+(compact?'compact':'')} data-print-test-phase={printProgress?(printProgress.falling?'falling':'printing'):'idle'}>
+  },[analysis,highlight,showParts,showThin,thin,model,supportShown]);
+  useEffect(()=>{
+    const r=runtime.current;if(!r||!supportShown||!analysis?.supportContacts.length)return;
+    const ground=Math.min(...analysis.partBounds.map(part=>part.min[2])),height=analysis.supportContacts.reduce((sum,contact)=>sum+(contact.top+contact.bottom)/2,0)/analysis.supportContacts.length;
+    const distance=r.camera.position.distanceTo(r.controls.target),target=new THREE.Vector3(0,(height-ground)*scaleRef.current/100,0);r.camera.position.copy(target).add(new THREE.Vector3(1.3,0,1.6).normalize().multiplyScalar(distance));r.controls.target.copy(target);r.controls.update();r.render();
+  },[supportShown,analysis,model]);
+  return <div className={'viewer '+(compact?'compact':'')} data-print-test-phase={printProgress?(printProgress.falling?'falling':'printing'):'idle'} data-support-preview={supportShown?'visible':'hidden'} data-support-count={analysis?.supportContacts.length||0}>
     <div className="viewer-unit-label">{baseDimensions.map(n=>(n*scalePercent/100).toFixed(1)).join(' × ')} mm</div>
     <div className="viewer-canvas" ref={container}/>
     <div className="viewer-label"><span className="live-dot"/> INTERACTIVE 3D PREVIEW</div>
-    {printProgress?<div className="print-animation-label" role="status"><b>Test print · {printProgress.percent}%</b><span>Layer {printProgress.layer} of {printProgress.layers}{printProgress.falling?' · Floating parts are falling':''}</span></div>:analysis&&<div className="viewer-issue-key">{analysis.components>1&&<span><i className="parts-key"/>Separate parts outlined</span>}{analysis.floating>0&&<span><i className="floating-key"/>Floating parts</span>}{thin.triangles.length>0&&<span><i className="thin-key"/>Thin areas</span>}{analysis.overhangTriangles.length>0&&<span><i className="support-key"/>Possible supports</span>}{analysis.problemEdges.length>0&&<span><i className="floating-key"/>Open or shared edges</span>}</div>}
+    {printProgress?<div className="print-animation-label" role="status"><b>Test print · {printProgress.percent}%</b><span>Layer {printProgress.layer} of {printProgress.layers}{printProgress.falling?' · Floating parts are falling':''}</span></div>:analysis&&<div className="viewer-issue-key">{analysis.components>1&&<span><i className="parts-key"/>Separate parts outlined</span>}{analysis.floating>0&&<span><i className="floating-key"/>Floating parts</span>}{thin.triangles.length>0&&<span><i className="thin-key"/>Thin areas</span>}{analysis.supportContacts.length>0&&<button type="button" className="support-key-button" disabled={!!printProgress} aria-pressed={supportShown} onClick={toggleSupports}><i className="support-key"/>{supportShown?'Hide supports':'Simulate supports'}</button>}{supportShown&&analysis.supportContacts.length>0&&<span className="support-finish-note">Speckled areas may leave a rough underside.</span>}{analysis.problemEdges.length>0&&<span><i className="floating-key"/>Open or shared edges</span>}</div>}
     {error&&<div className="viewer-error" role="alert">{error}</div>}
     <div className="viewer-bottom"><span><Move size={13}/> Grid: 10 mm · Drag to rotate · scroll to zoom</span><div className="viewer-tools"><button type="button" className="viewer-home" onClick={()=>runtime.current?.reset()} title="Return to the starting view" aria-label="Home view"><Home size={15}/> Home view</button><button type="button" onClick={()=>setWireframe(!wireframe)} aria-pressed={wireframe} title="Wireframe" aria-label="Toggle wireframe"><Box size={17}/></button>{!!analysis&&analysis.components>1&&<button type="button" onClick={()=>setShowParts(!showParts)} disabled={!!printProgress} aria-pressed={showParts} title="Highlight separate parts" aria-label="Highlight separate parts"><Layers3 size={17}/></button>}{!!thin.triangles.length&&<button type="button" onClick={()=>setShowThin(!showThin)} disabled={!!printProgress} aria-pressed={showThin} title="Highlight thin areas" aria-label="Highlight thin areas"><Ruler size={17}/></button>}{!!analysis?.floating&&<button type="button" onClick={()=>setHighlight(!highlight)} disabled={!!printProgress} aria-pressed={highlight} title="Highlight floating parts" aria-label="Highlight floating parts"><ScanLine size={17}/></button>}</div></div>
   </div>;

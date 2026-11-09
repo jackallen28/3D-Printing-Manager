@@ -9,6 +9,12 @@ export function stl(positions=cube()) {
   for(let t=0;t<positions.length/9;t++)for(let i=0;i<9;i++)b.writeFloatLE(positions[t*9+i],84+t*50+12+i*4);
   return b;
 }
+export function cantilever() {
+  const profile=[[0,0],[10,0],[10,20],[20,20],[20,23],[0,23]],vertices=[...profile.map(([x,z])=>[x,0,z]),...profile.map(([x,z])=>[x,10,z])];
+  const caps=[[0,1,2],[0,2,5],[2,3,4],[2,4,5]],faces=[...caps,...caps.map(face=>face.map(i=>i+6).reverse())];
+  for(let i=0;i<6;i++){const next=(i+1)%6;faces.push([i,next+6,next],[i,i+6,next+6]);}
+  return new Float32Array(faces.flatMap(face=>face.flatMap(index=>vertices[index])));
+}
 export function multicolour3mf() {
   const positions=cube();const vertices=Array.from({length:positions.length/3},(_,i)=>`<vertex x="${positions[i*3]}" y="${positions[i*3+1]}" z="${positions[i*3+2]}"/>`).join('');
   const triangles=Array.from({length:positions.length/9},(_,t)=>`<triangle v1="${t*3}" v2="${t*3+1}" v3="${t*3+2}" pid="2" p1="${t%2}"/>`).join('');

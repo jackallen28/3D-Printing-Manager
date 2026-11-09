@@ -4,7 +4,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { unzipSync, strFromU8 } from 'fflate';
 import type {Analysis} from '../types';
-export interface LoadedModel { object: THREE.Group; palette: string[]; notices: string[]; positions: Float32Array; colourIndices:Uint8Array; format:string; analysis?:Analysis; parts?: {source:string;name:string}[]; }
+export interface LoadedModel { object: THREE.Group; palette: string[]; notices: string[]; positions: Float32Array; colourIndices:Uint8Array; format:string; analysis?:Analysis; objects:{name:string;triangles:Uint32Array}[]; parts?: {source:string;name:string}[]; }
 const MAX_EXPANDED = 100 * 1024 * 1024;
 function checkZip(buffer: ArrayBuffer) {
   const view = new DataView(buffer); let eocd = -1;
@@ -138,12 +138,16 @@ export async function loadModel(file: File):Promise<LoadedModel> {
     loaded={object,palette:['#19c1ca'],notices:['STL has no measurement units. This preview assumes millimetres.']};
   }
   loaded.object.updateMatrixWorld(true);
-  const arrays:Float32Array[]=[],sourceArrays:Uint8Array[]=[];let length=0;const sourceIndex=new Map(loaded.palette.map((source,i)=>[source,i]));
-  loaded.object.traverse(node=>{ if(node instanceof THREE.Mesh) { let geometry=node.geometry.clone(); if(geometry.index) geometry=geometry.toNonIndexed(); geometry.applyMatrix4(node.matrixWorld); const array=new Float32Array(geometry.getAttribute('position').array); arrays.push(array);length+=array.length;const colours=geometry.getAttribute('color'),indices=new Uint8Array(array.length/3),colour=new THREE.Color();for(let i=0;i<indices.length;i++){const source=colours?'#'+colour.setRGB(colours.getX(i),colours.getY(i),colours.getZ(i)).getHexString():node.userData.colourSource||loaded.palette[0];indices[i]=sourceIndex.get(source)||0;}sourceArrays.push(indices);geometry.dispose(); } });
+  const arrays:Float32Array[]=[],sourceArrays:Uint8Array[]=[],objects=new Map<THREE.Object3D,{name:string;triangles:number[]}>();let length=0;const sourceIndex=new Map(loaded.palette.map((source,i)=>[source,i]));
+  loaded.object.traverse(node=>{ if(node instanceof THREE.Mesh) { let geometry=node.geometry.clone(); if(geometry.index) geometry=geometry.toNonIndexed(); geometry.applyMatrix4(node.matrixWorld); const array=new Float32Array(geometry.getAttribute('position').array);let owner:THREE.Object3D=node;while(owner.parent&&owner.parent!==loaded.object)owner=owner.parent;const entry=objects.get(owner)||{name:owner.name||'Object '+(objects.size+1),triangles:[]};for(let i=0;i<array.length/9;i++)entry.triangles.push(length/9+i);objects.set(owner,entry);arrays.push(array);length+=array.length;const colours=geometry.getAttribute('color'),indices=new Uint8Array(array.length/3),colour=new THREE.Color();for(let i=0;i<indices.length;i++){const source=colours?'#'+colour.setRGB(colours.getX(i),colours.getY(i),colours.getZ(i)).getHexString():node.userData.colourSource||loaded.palette[0];indices[i]=sourceIndex.get(source)||0;}sourceArrays.push(indices);geometry.dispose(); } });
   const positions=new Float32Array(length); let offset=0; for(const a of arrays){positions.set(a,offset);offset+=a.length;}
   if(!positions.length||positions.some(n=>!Number.isFinite(n))) throw new Error('This file does not contain a valid 3D model. Export an STL or 3MF from your CAD program.');
   const colourIndices=new Uint8Array(length/3);offset=0;for(const array of sourceArrays){colourIndices.set(array,offset);offset+=array.length;}
-  return {...loaded,positions,colourIndices,format:file.name.split('.').at(-1)!.toLowerCase()};
+  return {...loaded,positions,colourIndices,format:file.name.split('.').at(-1)!.toLowerCase(),objects:[...objects.values()].map(value=>({...value,triangles:new Uint32Array(value.triangles)}))};
+}
+export function areaName(model:LoadedModel|null,source:string,index:number,sections=false) {
+ const name=model?.parts?.find(part=>part.source===source)?.name;
+ return name?(sections?name.replace(/^Part\b/,'Section'):name):`${sections?'Section':'Part'} ${index+1}`;
 }
 
 export function splitModelParts(model:LoadedModel, triangleParts:Uint32Array, count:number):LoadedModel {

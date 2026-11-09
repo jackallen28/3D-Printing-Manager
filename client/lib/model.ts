@@ -3,7 +3,8 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { unzipSync, strFromU8 } from 'fflate';
-export interface LoadedModel { object: THREE.Group; palette: string[]; notices: string[]; positions: Float32Array; parts?: {source:string;name:string}[]; }
+import type {Analysis} from '../types';
+export interface LoadedModel { object: THREE.Group; palette: string[]; notices: string[]; positions: Float32Array; colourIndices:Uint8Array; format:string; analysis?:Analysis; parts?: {source:string;name:string}[]; }
 const MAX_EXPANDED = 100 * 1024 * 1024;
 function checkZip(buffer: ArrayBuffer) {
   const view = new DataView(buffer); let eocd = -1;
@@ -137,11 +138,12 @@ export async function loadModel(file: File):Promise<LoadedModel> {
     loaded={object,palette:['#19c1ca'],notices:['STL has no measurement units. This preview assumes millimetres.']};
   }
   loaded.object.updateMatrixWorld(true);
-  const arrays:Float32Array[]=[]; let length=0;
-  loaded.object.traverse(node=>{ if(node instanceof THREE.Mesh) { let geometry=node.geometry.clone(); if(geometry.index) geometry=geometry.toNonIndexed(); geometry.applyMatrix4(node.matrixWorld); const array=new Float32Array(geometry.getAttribute('position').array); arrays.push(array); length+=array.length; geometry.dispose(); } });
+  const arrays:Float32Array[]=[],sourceArrays:Uint8Array[]=[];let length=0;const sourceIndex=new Map(loaded.palette.map((source,i)=>[source,i]));
+  loaded.object.traverse(node=>{ if(node instanceof THREE.Mesh) { let geometry=node.geometry.clone(); if(geometry.index) geometry=geometry.toNonIndexed(); geometry.applyMatrix4(node.matrixWorld); const array=new Float32Array(geometry.getAttribute('position').array); arrays.push(array);length+=array.length;const colours=geometry.getAttribute('color'),indices=new Uint8Array(array.length/3),colour=new THREE.Color();for(let i=0;i<indices.length;i++){const source=colours?'#'+colour.setRGB(colours.getX(i),colours.getY(i),colours.getZ(i)).getHexString():node.userData.colourSource||loaded.palette[0];indices[i]=sourceIndex.get(source)||0;}sourceArrays.push(indices);geometry.dispose(); } });
   const positions=new Float32Array(length); let offset=0; for(const a of arrays){positions.set(a,offset);offset+=a.length;}
   if(!positions.length||positions.some(n=>!Number.isFinite(n))) throw new Error('This file does not contain a valid 3D model. Export an STL or 3MF from your CAD program.');
-  return {...loaded,positions};
+  const colourIndices=new Uint8Array(length/3);offset=0;for(const array of sourceArrays){colourIndices.set(array,offset);offset+=array.length;}
+  return {...loaded,positions,colourIndices,format:file.name.split('.').at(-1)!.toLowerCase()};
 }
 
 export function splitModelParts(model:LoadedModel, triangleParts:Uint32Array, count:number):LoadedModel {
@@ -150,10 +152,11 @@ export function splitModelParts(model:LoadedModel, triangleParts:Uint32Array, co
  triangleParts.forEach((part,t)=>{for(let v=0;v<9;v++)groups[part].push(model.positions[t*9+v]);});
  const object=new THREE.Group();const palette:string[]=[];const parts:{source:string;name:string}[]=[];
  groups.forEach((positions,i)=>{const source='#'+new THREE.Color().setHSL((0.48+i*0.6180339)%1,0.55,0.55).getHexString();const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();const mesh=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:source,roughness:0.55,metalness:0.04,side:THREE.DoubleSide}));mesh.name='Part '+(i+1);mesh.userData.colourSource=source;object.add(mesh);palette.push(source);parts.push({source,name:mesh.name});});
- return {...model,object,palette,parts};
+ const colourIndices=new Uint8Array(model.positions.length/3);triangleParts.forEach((part,t)=>colourIndices.fill(part,t*3,t*3+3));
+ return {...model,object,palette,parts,colourIndices};
 }
 export async function prepareRequestedParts(model:LoadedModel,sources:string[]):Promise<LoadedModel> {
- if(model.parts?.length||model.palette.length>1||sources.length<2)return model;
+ if(model.analysis)return model;
  const {default:Worker}=await import('./analysis.worker?worker&inline');
- return new Promise((resolve,reject)=>{const worker=new Worker();worker.onmessage=event=>{worker.terminate();if(event.data.error)reject(new Error(event.data.error));else resolve(splitModelParts(model,event.data.result.triangleParts,event.data.result.components));};worker.onerror=()=>{worker.terminate();reject(new Error('The model parts could not be read.'));};const positions=model.positions.slice();worker.postMessage(positions,[positions.buffer]);});
+ return new Promise((resolve,reject)=>{const worker=new Worker();worker.onmessage=event=>{worker.terminate();if(event.data.error)reject(new Error(event.data.error));else{const analysis=event.data.result;const prepared=sources.length>1?splitModelParts(model,analysis.triangleParts,analysis.components):model;resolve({...prepared,analysis});}};worker.onerror=()=>{worker.terminate();reject(new Error('The model parts could not be read.'));};const positions=model.positions.slice();worker.postMessage({positions,format:model.format},[positions.buffer]);});
 }

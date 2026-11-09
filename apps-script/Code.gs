@@ -176,8 +176,9 @@ function validateDetails_(input, settings) {
   if (settings.customColourEnabled) available.push('Custom');
   available.push(BNTS_CATALOG.advancedFilament);
   value.advancedFilamentNote=shortText_(input.advancedFilamentNote||'',800,false);
-  if (available.indexOf(value.colour) < 0 || !Array.isArray(input.colourMapping) || input.colourMapping.length > 32) fail_('Choose available colour preferences.', 400);
-  value.colourMapping = input.colourMapping.map(function (m) { if (!m || available.indexOf(m.target) < 0 || !/^#[a-f\d]{6}$/i.test(m.source)) fail_('Choose valid model colour preferences.', 400); return { source: m.source, target: m.target, partName:shortText_(m.partName||'',80,false) }; });
+  if (available.indexOf(value.colour) < 0 || !Array.isArray(input.colourMapping) || !input.colourMapping.length || input.colourMapping.length > 32) fail_('Choose available colour preferences.', 400);
+  var assigned=new Set();
+  value.colourMapping = input.colourMapping.map(function (m) { if (!m || available.indexOf(m.target) < 0 || !/^#[a-f\d]{6}$/i.test(m.source)) fail_('Choose valid model colour preferences.', 400);var source=m.source.toLowerCase();if(assigned.has(source))fail_('Choose one colour for each model part.',400);assigned.add(source);return { source:source, target: m.target, partName:shortText_(m.partName||'',80,false) }; });
   if ((value.colour === 'Custom' || value.colourMapping.some(function (m) { return m.target === 'Custom'; })) && !value.customColour) fail_('Describe your custom colour request.', 400);
   value.scalePercent=input.scalePercent===undefined?100:input.scalePercent;if(typeof value.scalePercent!=='number'||!Number.isFinite(value.scalePercent)||value.scalePercent<1||value.scalePercent>1000)fail_('Choose a scale between 1% and 1000%.',400);value.size=value.scalePercent+'% scale';
   value.dimensionsMm=input.dimensionsMm||null;if(value.dimensionsMm&&(!Array.isArray(value.dimensionsMm)||value.dimensionsMm.length!==3||value.dimensionsMm.some(function(v){return typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e9;})))fail_('Check the model dimensions in mm.',400);
@@ -191,12 +192,14 @@ function validateDetails_(input, settings) {
   value.readyConfirmed = true; value.detailsConfirmed = true; value.school = school.name; value.staff = staff.name; value.classroom = classroom ? classroom.name : ''; value.colourLabel = value.colour === 'Custom' ? 'Custom ' + value.customColour : value.colour;
   return value;
 }
-function safePart_(value, max) { return String(value).normalize('NFKC').replace(/[^\p{L}\p{N} .-]/gu, '-').replace(/[ .-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max || 50) || 'unnamed'; }
+function safePart_(value, max) { return Array.from(String(value).normalize('NFKC').replace(/[^\p{L}\p{N} .-]/gu, '-').replace(/[ .-]+/g, '-').replace(/^-+|-+$/g, '')).slice(0, max || 50).join('') || 'unnamed'; }
 function makeRecord_(value, name, bytes) {
   var now = new Date(), date = Utilities.formatDate(now, 'Australia/Melbourne', 'yyyy-MM-dd'), id = Utilities.getUuid();
   var colours=Array.from(new Set((value.colourMapping.length?value.colourMapping.map(function(m){return m.target;}):[value.colour]).map(function(c){return c===BNTS_CATALOG.advancedFilament?'ADVANCED':BNTS_CATALOG.simpleColours[c]||'CUSTOM';})));
-  var colour=colours.length>1?'MULTICOLOUR':colours[0];
-  var filename=[safePart_(value.school,80),colour,date,safePart_(value.firstName,40)].join('_')+'.'+name.split('.').pop().toLowerCase();
+  var colour=colours.join('_'),labels=[Array.from(safePart_(value.school,80)),Array.from(safePart_(value.firstName,40))],extension=name.split('.').pop().toLowerCase();
+  function filename_(){return [labels[0].join(''),colour,date,labels[1].join('')].join('_')+'.'+extension;}
+  while(Utilities.newBlob(filename_()).getBytes().length>240)labels[labels[0].length>labels[1].length?0:1].pop();
+  var filename=filename_();
   return Object.assign({}, value, { id: id, filename: filename, originalName: name, bytes: bytes, date: date, createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 14 * 86400000).toISOString(), status: 'queued' });
 }
 function submit_(body) {

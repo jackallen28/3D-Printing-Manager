@@ -24,6 +24,7 @@ async function init(s,overrides={}) {
 async function sendPart(s,pending,kind,bytes) {
  return s.request(`/uploads/${pending.id}/${kind}`,{method:'PUT',headers:{Authorization:'Bearer '+pending.token,'Content-Length':String(bytes.length),Origin:'https://studio.test'},body:bytes});
 }
+test('Cloudflare rejects conflicting colours for one part and retains all selected colour names',async t=>{const s=await setup(t);const duplicate=await init(s,{details:{...details(),colourMapping:[{source:'#ABCDEF',target:'Jade White'},{source:'#abcdef',target:'Blue'}]}});assert.equal(duplicate.response.status,400);assert.match(duplicate.body.error,/one colour/);const saved=await submit(s,{details:{...details(),colourMapping:[{source:'#abcdef',target:'Jade White'},{source:'#123456',target:'Blue'}]}});assert.match(saved.receipt.filename,/^School-A_WHITE_BLUE_\d{4}-\d\d-\d\d_Mia\.stl$/);});
 async function submit(s,overrides={}) {
  const p=await init(s,overrides);assert.equal(p.response.status,200,JSON.stringify(p.body));
  for(const [kind,data]of [['model',p.model],['preview',png]]){const response=await sendPart(s,p.body,kind,data);assert.equal(response.status,200,await response.text());}

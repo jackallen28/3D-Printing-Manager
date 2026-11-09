@@ -15,8 +15,19 @@ export const simpleColours={
 export function filenameColour(value) {
  const targets=value.colourMapping?.length?value.colourMapping.map(m=>m.target):[value.colour];
  const names=[...new Set(targets.map(target=>target===ADVANCED_FILAMENT?'ADVANCED':simpleColours[target]||'CUSTOM'))];
- return names.length>1?'MULTICOLOUR':names[0];
+ return names.join('_');
 }
 export function previewStyle(record) {
  return {scalePercent:record.scalePercent??100,mapping:Object.fromEntries((record.colourMapping||[]).map(m=>[m.source,m.target===ADVANCED_FILAMENT?ADVANCED_HEX:BAMBU_COLOURS.find(c=>c.name===m.target)?.hex||'#cfc2e0'])),advancedSources:(record.colourMapping||[]).filter(m=>m.target===ADVANCED_FILAMENT).map(m=>m.source)};
+}
+export const EXPORT_MAX_BYTES=150*1024*1024;
+export function exportBatches(records) {
+ const batches=[];let batch=[],bytes=0;
+ for(const record of records){
+  if(record.bytes>EXPORT_MAX_BYTES)throw new Error('This file is too large to export. Download it individually.');
+  if(bytes+record.bytes>EXPORT_MAX_BYTES&&batch.length){batches.push(batch);batch=[];bytes=0;}
+  batch.push(record);bytes+=record.bytes;
+ }
+ if(batch.length)batches.push(batch);
+ return batches;
 }

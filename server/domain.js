@@ -29,7 +29,7 @@ export const submissionSchema = z.object({
   requestId: z.uuid(), firstName: text(40).min(1).regex(/^[\p{L}\p{M} '\-]+$/u, 'Use your first name only'),
   schoolId: z.uuid(), staffId: z.uuid(), classId: z.union([z.uuid(), z.literal('')]).default(''), classCode: text(80).default(''),
   colour: text(80).min(1), customColour: text(80), advancedFilamentNote: text(800).default(''),
-  colourMapping: z.array(z.object({ source: text(40), target: text(80).min(1), partName: text(80).optional() })).max(32),
+  colourMapping: z.array(z.object({ source: z.string().regex(/^#[a-f\d]{6}$/i,'Choose a valid model part.').transform(s=>s.toLowerCase()), target: text(80).min(1), partName: text(80).optional() })).min(1).max(32),
   size: text(80).default('100% scale'), scalePercent: z.number().min(1).max(1000).default(100), dimensionsMm: z.tuple([z.number().min(0).max(1e9),z.number().min(0).max(1e9),z.number().min(0).max(1e9)]).nullable().default(null), supports: z.enum(PREFERENCES.supports),
   printer: z.enum(PREFERENCES.printer), quality: z.enum(PREFERENCES.quality),
   copies: z.number().int().min(1).max(10), notes: text(800),
@@ -37,6 +37,8 @@ export const submissionSchema = z.object({
     const v = new URL(u); return v.protocol === 'https:' && !v.username && !v.password;
   }, 'Use a secure https link')]),
   readyConfirmed: z.literal(true), detailsConfirmed: z.literal(true),
+}).superRefine((value,ctx)=>{
+  if(new Set(value.colourMapping.map(m=>m.source)).size!==value.colourMapping.length)ctx.addIssue({code:'custom',path:['colourMapping'],message:'Choose one colour for each model part.'});
 });
 export function validateSubmission(data, settings) {
   const value = submissionSchema.parse(data);
@@ -55,7 +57,7 @@ export function validateSubmission(data, settings) {
   return { ...value, school: school.name, staff: staff.name, classroom: classroom.classroom, colourLabel: value.colour === 'Custom' ? `Custom ${value.customColour}` : value.colour };
 }
 export function safePart(text, max = 50) {
-  return text.normalize('NFKC').replace(/[^\p{L}\p{N} .-]/gu, '-').replace(/[ .-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max) || 'unnamed';
+  return Array.from(text.normalize('NFKC').replace(/[^\p{L}\p{N} .-]/gu, '-').replace(/[ .-]+/g, '-').replace(/^-+|-+$/g, '')).slice(0, max).join('') || 'unnamed';
 }
 export function localDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
@@ -64,7 +66,11 @@ export function makeRecord(value, originalName, bytes, now = new Date()) {
   const id = randomUUID();
   const extension = originalName.split('.').at(-1).toLowerCase();
   const date = localDate(now);
-  const name = [safePart(value.school,80),filenameColour(value),date,safePart(value.firstName,40)].join('_')+'.'+extension;
+  const labels=[Array.from(safePart(value.school,80)),Array.from(safePart(value.firstName,40))],colour=filenameColour(value);
+  const filename=()=>[labels[0].join(''),colour,date,labels[1].join('')].join('_')+'.'+extension;
+  const encoder=new TextEncoder();
+  while(encoder.encode(filename()).length>240)labels[labels[0].length>labels[1].length?0:1].pop();
+  const name=filename();
   return { ...value, id, filename: name, originalName, bytes, date, createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + RETENTION_DAYS * 86400000).toISOString(), status: 'queued' };
 }
 export function extractFolderId(input) {

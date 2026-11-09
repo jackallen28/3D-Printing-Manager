@@ -11,9 +11,10 @@ A student file uploader and teacher console for Banyule Nillumbik Tech School. T
 - Drag and drop or choose a file, up to **50 MB** (52,428,800 bytes).
 - Preview STL, OBJ and 3MF in 3D; PLY previews can also be enabled by staff.
 - Scale the model up or down (1–1000%) in the viewer. Dimensions and the 10 mm reference grid always use millimetres.
-- Select model parts and choose colours; **Add another colour** helps assign another part. OBJ objects, material groups and small disconnected mesh components can be coloured separately. Multi-colour 3MF colour areas are selectable too. Most prints use one colour unless arranged otherwise.
+- Select a model part or colour area and choose **one** colour. A new choice replaces its previous choice; tried colours are not kept as additional selections. **Add another colour** selects a different part without recolouring it automatically. OBJ objects, material groups and small disconnected mesh components can be coloured separately. Multi-colour 3MF colour areas are selectable too. Most prints use one colour unless arranged otherwise.
 - Request an advanced filament when needed, describe the request, and see a glitter-purple preview. This is a visual placeholder, not a promise that a particular filament is stocked.
-- Review warnings about possible floating parts, disconnected parts, mesh errors, model size and supports.
+- Review warnings about possible floating parts, disconnected parts, mesh errors, model size and supports. Floating areas are red, thin areas are amber, possible support areas are blue, separate pieces have outlines, and open/problem edges have red lines. These highlights are also available in teacher and home previews.
+- Use **Test print** to watch a trial layer preview. Clearly floating pieces turn red and fall away. Possible failures show no more than three short action points, including consulting a teacher. Stop/replay is available; changing the model, scale or colours clears the old result.
 - Confirm the model, then enter first name, school, BNTS staff member and an optional class code. Entering a valid code joins the selected school’s class; blank means no class. Codes are case-insensitive and are validated on the server.
 - Choose supports, printer, quality and copy count; add notes and an optional design link.
 - Review and submit. A receipt appears only after both the model and thumbnail are stored and the submission is complete.
@@ -22,7 +23,7 @@ STL, OBJ, STEP (`.step` / `.stp`), 3MF and ZIP archives are always accepted. Sta
 
 The original file is preserved. Chosen scale, dimensions, colours and print settings are saved as requests for staff to apply in the slicer; the app does not modify, repair, slice or execute the file. Slicer-specific 3MF painted facets and textures may not render accurately; detected unsupported features are explained. STL, OBJ and PLY assume millimetres and Z-up. Separate OBJ material files are not loaded.
 
-Model checks run in the browser and are advisory. Detailed topology checks are skipped above 200,000 triangles with an explicit notice. The Cloudflare server validates allowed types, declared/actual byte lengths, preview signature and form options; it streams originals to private storage without parsing large CAD files on the server. Staff must check originals in an appropriate CAD app/slicer.
+Model checks run in the browser and are advisory. OBJ checks allow normal separate colour sections, shared interfaces and small seams; substantial openings and clearly detached sections still warn. Touching bounds are treated conservatively as potential support for OBJ, and the UI makes clear that staff must check the result. STL/3MF thickness checks sample up to 2,000 surface points with inward rays and inspect separate-part dimensions; areas below **0.8 mm at the requested scale** are highlighted. Small or complex features can be missed, and printability also depends on nozzle, settings and supports. The Test print animation illustrates layer order and detected loose parts; it does not generate toolpaths or simulate material strength, extrusion or full slicer support planning. The trial animation is limited to models with completed checks and at most 64 components. A clear message directs students to staff when it is unavailable. Detailed topology checks are skipped above 200,000 triangles with an explicit notice. The Cloudflare server validates allowed types, declared/actual byte lengths, preview signature and form options; it streams originals to private storage without parsing large CAD files on the server. Staff must check originals in an appropriate CAD app/slicer.
 
 ## View at home
 
@@ -41,7 +42,7 @@ Open `/teacher` and sign in with the staff password configured in Cloudflare. No
 - Browse School → Class, or School → Date for files with no class.
 - Search and filter files; sort by size, colour, name or date.
 - Open larger previews with the full student form, download originals and mark Queued / Printing / Printed.
-- Select multiple files to change their status in bulk or export them as a ZIP. Bulk exports contain original CAD files plus **Print settings.csv**, with scales, mm dimensions, per-part colours and staff notes. Chrome/Edge stream large exports directly to a chosen local file; other browsers use an in-memory export limited to 150 MB. Files with identical names remain separate in archive folders.
+- Select multiple files to change their status in bulk or export them as a ZIP. Bulk exports contain original CAD files plus **Print settings.csv**, with scales, mm dimensions, per-part colours and staff notes. Exports use normal browser downloads, without requesting file-editing access. Large selections are divided into ZIPs containing up to 150 MB of original model data each; teachers download each ZIP from the download dialog. Files with identical names remain separate in archive folders.
 - Delete a submission permanently, view storage use and run cleanup manually.
 
 There is no Google connection screen on the Cloudflare deployment. Student uploads become available after the teacher has added at least one school and staff member and saved setup.
@@ -59,11 +60,11 @@ submissions/
       submission-id/School_WHITE_Date_FirstName.stl
       ...stl.preview.png
       Class-name--class-id/
-        submission-id/School_MULTICOLOUR_Date_FirstName.3mf
+        submission-id/School_WHITE_BLUE_Date_FirstName.3mf
         ...3mf.preview.png
 ```
 
-No class folder or “no class” text is added when no class is selected. Download filenames contain only **School_COLOUR_Date_FirstName.ext**, for example `School_WHITE_2026-11-09_Mia.stl`. Colours use short uppercase labels: Jade White becomes WHITE, Bambu Green becomes GREEN, and multiple requested colours become MULTICOLOUR. Class, staff, supports, printer, scale and notes are not added to filenames. R2 uses a separate submission ID folder to prevent collisions without changing the download name. Full settings and comments are stored in D1 and shown to staff; bulk exports also include the print-settings CSV.
+No class folder or “no class” text is added when no class is selected. Download filenames contain only **School_COLOUR1_COLOUR2_Date_FirstName.ext** (one or more colour labels), for example `School_WHITE_2026-11-09_Mia.stl`. Colours use short uppercase labels: Jade White becomes WHITE, Bambu Green becomes GREEN, and multiple requested colours are listed in order, for example `School_WHITE_BLUE_2026-11-09_Mia.obj`. Repeated colour labels appear once, and colours that were replaced are omitted. Very long school/student labels are shortened to keep the filename within 240 UTF-8 bytes while retaining every colour label. Class, staff, supports, printer, scale and notes are not added to filenames. R2 uses a separate submission ID folder to prevent collisions without changing the download name. Full settings and comments are stored in D1 and shown to staff; bulk exports also include the print-settings CSV.
 
 An atomic **8 GB cap** counts completed and pending uploads, including thumbnail allowance. New submissions stop when capacity is reached. Model uploads stream directly into R2 instead of retaining a 50 MB file in worker memory. Tickets are scoped to one submission, retries reuse the request ID, and originals are conditionally created to prevent overwriting completed content.
 

@@ -19,7 +19,7 @@ import { isAppsScript, homeUrl } from "./platform";
 import { FILE_FORMATS, fileFormat } from "../shared/formats.js";
 import { loadModel, prepareRequestedParts, type LoadedModel } from "./lib/model";
 import { Viewer } from "./components/Viewer";
-import { ErrorMessage, Field, Loading, bytesLabel, dateLabel } from "./components/Layout";
+import { ErrorMessage, Field, PageLoading, bytesLabel, dateLabel } from "./components/Layout";
 import { normalizeClassCode, previewStyle, scaleLabel, exportBatches } from "../shared/printing.js";
 import { ADVANCED_FILAMENT, ADVANCED_HEX, BAMBU_COLOURS, staffLabel } from "../shared/catalog.js";
 import type { Settings, PrintRecord } from "./types";
@@ -180,7 +180,7 @@ export default function Teacher() {
       setBusy(false);
     }
   };
-  if (checking) return <Loading />;
+  if (checking) return <PageLoading />;
   if (!authenticated)
     return (
       <section className="page narrow" aria-labelledby="sign-in-title">

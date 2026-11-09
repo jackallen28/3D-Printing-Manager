@@ -8,6 +8,8 @@ A student file uploader and teacher console for Banyule Nillumbik Tech School. T
 
 ## Student site
 
+- Choose **Beginner** (the default) or **Advanced** on the upload page; switch at any time from the top of each step. Beginner shows the essentials: one colour for the whole model, the 3D preview with issue highlights, Test print and the supports preview, copies and notes. Advanced adds per-part colours, Other colour and Special filament, file splitting, viewer toggles, an exact scale box, model facts, and supports/printer/quality/design link. Beginner shows one line describing what Advanced would add for the current model. Options that are already in use are never hidden. The choice is remembered on the device. The rest of this list describes Advanced mode.
+
 - Drag and drop or choose a file, up to **50 MB** (52,428,800 bytes).
 - Preview STL, OBJ and 3MF in 3D; PLY previews can also be enabled by staff.
 - Scale the model up or down (1–1000%) in the viewer. Dimensions and the 10 mm reference grid always use millimetres.

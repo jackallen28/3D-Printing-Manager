@@ -15,11 +15,16 @@ import {
 import { api, upload, setUploadMode } from "./lib/api";
 import { loadModel, splitModelParts, areaName, type LoadedModel } from "./lib/model";
 import { Viewer, type ViewerHandle } from "./components/Viewer";
-import { ErrorMessage, Field, Loading, bytesLabel, dateLabel } from "./components/Layout";
+import { ErrorMessage, Field, Loading, PageLoading, bytesLabel, dateLabel } from "./components/Layout";
 import ColourEditor from "./components/ColourEditor";
-import PrintPreferences, { printOptions, type FilePrintOptions } from "./components/PrintPreferences";
+import PrintPreferences, {
+  printOptions,
+  usesAdvancedSettings,
+  type FilePrintOptions,
+} from "./components/PrintPreferences";
 import { splitGroups, splitIntoFiles } from "../shared/split-files.js";
 import ViewAtHome from "./components/ViewAtHome";
+import ModeSwitch, { saveMode, savedMode, type Mode } from "./components/ModeSwitch";
 import { dimensionWarnings } from "../shared/geometry.js";
 import { thinFeatures } from "../shared/thickness.js";
 import { printTestResult } from "../shared/print-test.js";
@@ -87,6 +92,14 @@ export default function Student() {
   const splitDefaults = useRef(new WeakMap<File, Partial<Details>>());
   useEffect(() => setSplitDismissed(false), [file]);
   const [selectedPart, setSelectedPart] = useState("");
+  // Beginner shows the essentials; Advanced adds per-part colours, file splitting, special filaments,
+  // viewer tools and print settings. Remembered on this device.
+  const [mode, setMode] = useState<Mode>(savedMode);
+  const expert = mode === "advanced";
+  const changeMode = (next: Mode) => {
+    setMode(next);
+    saveMode(next);
+  };
   const [showSupports, setShowSupports] = useState(false);
   useEffect(() => setShowSupports(false), [file, model]);
   const [printTest, setPrintTest] = useState<ReturnType<typeof printTestResult> | "running" | null>(null);
@@ -181,7 +194,7 @@ export default function Student() {
         source,
         target:
           defaults?.colourMapping?.find((m) => m.source === source)?.target ||
-          (loaded.parts || loaded.palette.length === 1
+          (loaded.parts || loaded.palette.length === 1 || mode === "beginner"
             ? config?.colours[0]?.name || "Custom"
             : closestColour(source, config!)),
       }));
@@ -285,6 +298,15 @@ export default function Student() {
   const needsCustom = details.colour === "Custom" || details.colourMapping.some((m) => m.target === "Custom");
   const sections = analysis?.components === 1 && details.colourMapping.length > 1;
   const objects = model && analysis ? splitGroups(model, analysis) : [];
+  const curiousExtras = [
+    details.colourMapping.length > 1 &&
+      `colour each of the ${details.colourMapping.length} ${sections ? "sections" : "parts"} separately`,
+    objects.length > 1 && objects.length <= 20 && `split it into ${objects.length} separate files`,
+    model && "see the triangles your model is made of",
+    "ask for special filaments like silk or glow-in-the-dark",
+  ]
+    .filter((item): item is string => !!item)
+    .slice(0, 3);
   const convertObjects = async () => {
     if (!file || !model || !analysis) return;
     setError("");
@@ -453,7 +475,7 @@ export default function Student() {
     setPreparedFiles([]);
     getConfig();
   };
-  if (!config && !configError) return <Loading />;
+  if (!config && !configError) return <PageLoading />;
   if (configError)
     return (
       <section className="page narrow">
@@ -482,6 +504,7 @@ export default function Student() {
           <p className="lead">
             Upload your model, check it in 3D and choose a colour. Your BNTS teacher will check it before it’s printed.
           </p>
+          <ModeSwitch mode={mode} onChange={changeMode} />
           <div
             className={"drop-zone" + (drag ? " dragging" : "") + (!config.acceptingUploads ? " unavailable" : "")}
             onDragOver={(e) => {
@@ -564,20 +587,23 @@ export default function Student() {
         </section>
       ) : (
         <>
-          <nav className="stepper" aria-label="Upload progress">
-            <ol>
-              {steps.map((name, i) => (
-                <li
-                  className={step === i ? "current" : step > i ? "done" : ""}
-                  key={name}
-                  aria-current={step === i ? "step" : undefined}
-                >
-                  <span aria-hidden="true">{step > i ? <Check size={14} strokeWidth={2.5} /> : i + 1}</span>
-                  {name}
-                </li>
-              ))}
-            </ol>
-          </nav>
+          <div className="workflow-top">
+            <nav className="stepper" aria-label="Upload progress">
+              <ol>
+                {steps.map((name, i) => (
+                  <li
+                    className={step === i ? "current" : step > i ? "done" : ""}
+                    key={name}
+                    aria-current={step === i ? "step" : undefined}
+                  >
+                    <span aria-hidden="true">{step > i ? <Check size={14} strokeWidth={2.5} /> : i + 1}</span>
+                    {name}
+                  </li>
+                ))}
+              </ol>
+            </nav>
+            <ModeSwitch mode={mode} onChange={changeMode} compact />
+          </div>
           <header className="step-heading">
             <h1 ref={heading} tabIndex={-1}>
               {step === 1 ? "Check your model" : step === 2 ? "Your details" : "Review and send"}
@@ -608,7 +634,7 @@ export default function Student() {
           <ErrorMessage message={error} />
           {step === 1 && file && (
             <>
-              {objects.length > 1 && !splitDismissed && (
+              {expert && objects.length > 1 && !splitDismissed && (
                 <section className="callout" aria-label="Separate objects">
                   <Info size={20} aria-hidden="true" />
                   <div>
@@ -646,6 +672,7 @@ export default function Student() {
                       onPartSelect={setSelectedPart}
                       supportsVisible={showSupports}
                       onSupportsChange={setShowSupports}
+                      tools={expert}
                     />
                   ) : (
                     <UnsupportedPreview filename={file.name} />
@@ -745,6 +772,13 @@ export default function Student() {
                           </>
                         )}
                       </ul>
+                      {expert && analysis.complete && (
+                        <p className="model-facts">
+                          {analysis.triangles.toLocaleString()} triangles · {analysis.components}{" "}
+                          {analysis.components === 1 ? "part" : "parts"}
+                          {dimensionsText && ` · ${dimensionsText}`}
+                        </p>
+                      )}
                       {analysis.notices.map((n) =>
                         n.code === "supports" ? (
                           <button
@@ -789,21 +823,23 @@ export default function Student() {
                     value={details.scalePercent}
                     onChange={(e) => update({ scalePercent: Number(e.target.value), readyConfirmed: false })}
                   />
-                  <label className="field scale-input">
-                    Scale (%)
-                    <input
-                      type="number"
-                      min={1}
-                      max={1000}
-                      step={1}
-                      value={details.scalePercent}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        if (Number.isFinite(v))
-                          update({ scalePercent: Math.min(1000, Math.max(1, v)), readyConfirmed: false });
-                      }}
-                    />
-                  </label>
+                  {expert && (
+                    <label className="field scale-input">
+                      Scale (%)
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        step={1}
+                        value={details.scalePercent}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v))
+                            update({ scalePercent: Math.min(1000, Math.max(1, v)), readyConfirmed: false });
+                        }}
+                      />
+                    </label>
+                  )}
                   <button
                     className="text-button"
                     disabled={details.scalePercent === 100}
@@ -829,6 +865,7 @@ export default function Student() {
                 </p>
               </section>
               <ColourEditor
+                expert={expert}
                 key={file.name + file.size}
                 model={model}
                 sections={sections}
@@ -855,8 +892,24 @@ export default function Student() {
               {archiveTotal > 1 && (
                 <section className="panel" aria-labelledby="file-options-heading">
                   <h2 id="file-options-heading">Print options for this file</h2>
-                  <PrintPreferences key={file.name + file.size} value={details} onChange={update} />
+                  <PrintPreferences
+                    key={file.name + file.size}
+                    value={details}
+                    onChange={update}
+                    expert={expert}
+                    onShowAdvanced={() => changeMode("advanced")}
+                  />
                 </section>
+              )}
+              {!expert && curiousExtras.length > 0 && (
+                <div className="curious">
+                  <p>
+                    <b>Want more control?</b> Advanced mode lets you {listText(curiousExtras)}.
+                  </p>
+                  <button type="button" className="text-button" onClick={() => changeMode("advanced")}>
+                    Switch to Advanced
+                  </button>
+                </div>
               )}
               {needsAck && (
                 <label className="checkbox-row acknowledge">
@@ -998,7 +1051,12 @@ export default function Student() {
                         Change
                       </button>
                     </div>
-                    <PrintPreferences value={details} onChange={update} />
+                    <PrintPreferences
+                      value={details}
+                      onChange={update}
+                      expert={expert}
+                      onShowAdvanced={() => changeMode("advanced")}
+                    />
                   </>
                 )}
               </section>
@@ -1080,18 +1138,22 @@ export default function Student() {
                           <dt>Copies</dt>
                           <dd>{details.copies}</dd>
                         </div>
-                        <div>
-                          <dt>Supports</dt>
-                          <dd>{displayLabel(details.supports)}</dd>
-                        </div>
-                        <div>
-                          <dt>Printer</dt>
-                          <dd>{displayLabel(details.printer)}</dd>
-                        </div>
-                        <div>
-                          <dt>Quality</dt>
-                          <dd>{displayLabel(details.quality)}</dd>
-                        </div>
+                        {(expert || usesAdvancedSettings(details)) && (
+                          <>
+                            <div>
+                              <dt>Supports</dt>
+                              <dd>{displayLabel(details.supports)}</dd>
+                            </div>
+                            <div>
+                              <dt>Printer</dt>
+                              <dd>{displayLabel(details.printer)}</dd>
+                            </div>
+                            <div>
+                              <dt>Quality</dt>
+                              <dd>{displayLabel(details.quality)}</dd>
+                            </div>
+                          </>
+                        )}
                         {details.notes && (
                           <div>
                             <dt>Notes</dt>
@@ -1222,4 +1284,9 @@ function ArchiveItem({ print }: { print: PreparedPrint }) {
       </span>
     </li>
   );
+}
+
+/** "a", "a and b", "a, b and c" */
+function listText(items: string[]) {
+  return items.length > 1 ? items.slice(0, -1).join(", ") + " and " + items.at(-1) : items[0];
 }

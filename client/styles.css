@@ -606,6 +606,136 @@ input[type="range"] {
   color: var(--text);
 }
 
+/* Student: level switch */
+.mode-switch {
+  /* Only reset the sides and bottom, so the page's vertical rhythm still sets the top margin. */
+  margin-inline: 0;
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.mode-switch legend {
+  padding: 0;
+  margin-bottom: var(--s2);
+  font-weight: 600;
+}
+.mode-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s3);
+}
+.mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
+}
+.mode-option:hover {
+  border-color: var(--border-strong);
+}
+.mode-option.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.mode-option:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.mode-option input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.mode-option b {
+  display: block;
+  font-weight: 600;
+}
+.mode-option small {
+  display: block;
+  color: var(--text-muted);
+}
+.mode-switch.compact .mode-options {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.mode-switch.compact .mode-option {
+  position: relative;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 var(--s3);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-inner);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.mode-switch.compact .mode-option input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.mode-switch.compact .mode-option.selected {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.workflow-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3) var(--s4);
+}
+.curious {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+}
+.curious p {
+  flex: 1 1 320px;
+}
+.curious b {
+  color: var(--text);
+  font-weight: 600;
+}
+.inline-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.model-facts {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+}
+
 /* Student: steps */
 .stepper ol {
   display: flex;
@@ -1735,6 +1865,7 @@ input[type="range"] {
     font-size: 0;
     gap: 0;
   }
+  .mode-options,
   .form-grid,
   .preview-layout,
   .review-layout,

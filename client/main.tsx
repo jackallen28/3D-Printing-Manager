@@ -1,6 +1,6 @@
 import { StrictMode, Component, lazy, Suspense, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { Layout, Loading } from "./components/Layout";
+import { Layout, PageLoading } from "./components/Layout";
 import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
 import "./styles.css";
 import { isTeacherPage } from "./platform";
@@ -31,7 +31,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Layout teacher={teacher}>
       <ErrorBoundary>
-        <Suspense fallback={<Loading />}>{teacher ? <Teacher /> : <Student />}</Suspense>
+        <Suspense fallback={<PageLoading />}>{teacher ? <Teacher /> : <Student />}</Suspense>
       </ErrorBoundary>
     </Layout>
   </StrictMode>,

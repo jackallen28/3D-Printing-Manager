@@ -79,6 +79,7 @@ test("class codes, mm scaling, OBJ colours, advanced requests, extracted ZIP fil
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Settings saved. The upload page now uses these options.")).toBeVisible();
   await page.goto("http://127.0.0.1:4174/");
+  await page.getByRole("radio", { name: /Advanced/ }).check();
   const archive = zipSync({
     "parts/colours.obj": strToU8(obj()),
     "small.stl": stl(new Float32Array([...cube(), ...cube(30, 0, 0)])),
@@ -236,6 +237,7 @@ test("ZIP model errors keep the batch unsubmitted; OBJ material groups can be co
   page,
 }) => {
   await page.goto("http://127.0.0.1:4174/");
+  await page.getByRole("radio", { name: /Advanced/ }).check();
   const archive = zipSync({
     "good.stl": stl(),
     "broken.obj": strToU8("This is not a model"),

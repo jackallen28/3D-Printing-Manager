@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PREFERENCES, displayLabel } from "../../shared/catalog.js";
 import type { Details } from "../types";
 import { Field } from "./Layout";
@@ -7,20 +7,31 @@ export function printOptions(details: Details): FilePrintOptions {
   const { supports, printer, quality, copies, notes, designLink } = details;
   return { supports, printer, quality, copies, notes, designLink };
 }
+const SETTINGS = ["supports", "printer", "quality"] as const;
 const LABELS = { supports: "Supports", printer: "Printer", quality: "Quality" } as const;
+/** True when any Advanced-only print setting has been changed from its default. */
+export const usesAdvancedSettings = (value: Details) =>
+  SETTINGS.some((key) => value[key] !== PREFERENCES[key][0]) || !!value.designLink;
 export default function PrintPreferences({
   value,
   onChange,
+  expert = true,
+  onShowAdvanced,
 }: {
   value: Details;
   onChange: (patch: Partial<Details>) => void;
+  /** Advanced mode shows supports, printer, quality and the design link. */
+  expert?: boolean;
+  onShowAdvanced?: () => void;
 }) {
-  // Open "More options" only if something in it was already changed. Read once so it never snaps shut.
-  const [startOpen] = useState(
-    () =>
-      (["supports", "printer", "quality"] as const).some((key) => value[key] !== PREFERENCES[key][0]) ||
-      !!value.designLink,
-  );
+  // In Beginner mode, settings that are already in use stay visible so nothing hidden is ever active.
+  // Once shown they stay shown, so they never vanish while being edited.
+  const inUse = usesAdvancedSettings(value);
+  const [keepShown, setKeepShown] = useState(inUse);
+  useEffect(() => {
+    if (inUse) setKeepShown(true);
+  }, [inUse]);
+  const showSettings = expert || keepShown;
   const usesOther = [value.supports, value.printer, value.quality].some((option) => option.startsWith("Custom"));
   return (
     <div className="form-stack">
@@ -35,6 +46,19 @@ export default function PrintPreferences({
             ))}
           </select>
         </label>
+        {showSettings &&
+          SETTINGS.map((key) => (
+            <label className="field" key={key}>
+              {LABELS[key]}
+              <select value={value[key]} onChange={(e) => onChange({ [key]: e.target.value })}>
+                {PREFERENCES[key].map((option) => (
+                  <option key={option} value={option}>
+                    {displayLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
         <Field
           full
           optional
@@ -54,23 +78,7 @@ export default function PrintPreferences({
             placeholder="For example: please keep the base flat."
           />
         </Field>
-      </div>
-      <details className="more-options" open={startOpen}>
-        <summary>More options</summary>
-        <p className="hint">Most people can leave these as they are.</p>
-        <div className="form-grid">
-          {(["supports", "printer", "quality"] as const).map((key) => (
-            <label className="field" key={key}>
-              {LABELS[key]}
-              <select value={value[key]} onChange={(e) => onChange({ [key]: e.target.value })}>
-                {PREFERENCES[key].map((option) => (
-                  <option key={option} value={option}>
-                    {displayLabel(option)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
+        {showSettings && (
           <Field
             full
             optional
@@ -86,8 +94,16 @@ export default function PrintPreferences({
               placeholder="https://www.tinkercad.com/things/…"
             />
           </Field>
-        </div>
-      </details>
+        )}
+      </div>
+      {!showSettings && onShowAdvanced && (
+        <p className="hint">
+          Your teacher picks the printer and settings for you.{" "}
+          <button type="button" className="inline-link" onClick={onShowAdvanced}>
+            Choose them yourself in Advanced mode
+          </button>
+        </p>
+      )}
     </div>
   );
 }

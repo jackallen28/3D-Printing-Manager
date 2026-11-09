@@ -18,6 +18,7 @@ export default function ColourEditor({
   onCustom,
   onAdvanced,
   sections = false,
+  expert = true,
 }: {
   model: LoadedModel | null;
   mapping: Mapping[];
@@ -31,11 +32,15 @@ export default function ColourEditor({
   onCustom: (v: string) => void;
   onAdvanced: (v: string) => void;
   sections?: boolean;
+  /** Advanced mode: colour each part, plus Other colour and Special filament. */
+  expert?: boolean;
 }) {
   const groupName = useId();
   const selected = mapping.find((m) => m.source === selectedPart) || mapping[0];
   const entity = sections ? "section" : "part";
-  const several = mapping.length > 1;
+  // Beginners choose one colour for the whole model; Advanced colours each part.
+  const several = expert && mapping.length > 1;
+  const mixed = !expert && new Set(mapping.map((m) => m.target)).size > 1;
   const partName = (source: string) =>
     areaName(
       model,
@@ -51,12 +56,13 @@ export default function ColourEditor({
   const swatchClass = (name: string) =>
     "swatch " + (name === ADVANCED_FILAMENT ? "special-swatch" : name === "Custom" ? "custom-swatch" : "");
   const assign = (target: string) => {
-    if (selected) onMapping(mapping.map((m) => (m.source === selected.source ? { ...m, target } : m)));
+    if (!expert) onMapping(mapping.map((m) => ({ ...m, target })));
+    else if (selected) onMapping(mapping.map((m) => (m.source === selected.source ? { ...m, target } : m)));
   };
   const advanced = mapping.some((m) => m.target === ADVANCED_FILAMENT),
     custom = mapping.some((m) => m.target === "Custom");
   const option = (name: string) => {
-    const checked = selected?.target === name;
+    const checked = expert ? selected?.target === name : !mixed && mapping[0]?.target === name;
     return (
       <label key={name} className={"colour-option " + (checked ? "selected" : "")}>
         <input
@@ -80,7 +86,9 @@ export default function ColourEditor({
       <p className="hint">
         {several
           ? `Select a ${entity}, then choose its colour. You can also click a ${entity} on the model. Most prints use one colour, so ask your teacher before using more.`
-          : "Most prints use one colour."}
+          : mixed
+            ? "Your model’s parts have different colours. Choosing a colour here uses it for the whole model."
+            : "Most prints use one colour."}
       </p>
       {several && (
         <div className="part-list" role="group" aria-label={sections ? "Model sections" : "Model parts"}>
@@ -104,8 +112,9 @@ export default function ColourEditor({
       {several && <p className="field-label">Colour for {selected ? partName(selected.source) : `this ${entity}`}</p>}
       <div className="swatches" role="radiogroup" aria-label="Available print colours">
         {colours.map((c) => option(c.name))}
-        {customEnabled && option("Custom")}
-        {option(ADVANCED_FILAMENT)}
+        {/* Beginners only see these when they are already in use, so nothing hidden is ever selected. */}
+        {customEnabled && (expert || custom) && option("Custom")}
+        {(expert || advanced) && option(ADVANCED_FILAMENT)}
       </div>
       <p className="hint">Colours on screen are approximate.</p>
       {custom && (

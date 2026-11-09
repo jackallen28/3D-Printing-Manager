@@ -25,6 +25,8 @@ export const Viewer = forwardRef<
     supportsVisible?: boolean;
     onSupportsChange?: (visible: boolean) => void;
     compact?: boolean;
+    /** Show the wireframe and highlight toggles. Beginners see the highlights without the switches. */
+    tools?: boolean;
   }
 >(
   (
@@ -38,6 +40,7 @@ export const Viewer = forwardRef<
       supportsVisible,
       onSupportsChange,
       compact,
+      tools = true,
     },
     ref,
   ) => {
@@ -66,6 +69,13 @@ export const Viewer = forwardRef<
       [showParts, setShowParts] = useState(true),
       [showThin, setShowThin] = useState(true);
     const [printProgress, setPrintProgress] = useState<PrintProgress | null>(null);
+    useEffect(() => {
+      if (tools) return;
+      setWireframe(false);
+      setHighlight(true);
+      setShowParts(true);
+      setShowThin(true);
+    }, [tools]);
     const animation = useRef<ReturnType<typeof animatePrint> | null>(null);
     const [localSupports, setLocalSupports] = useState(false);
     const supportShown = supportsVisible ?? localSupports;
@@ -582,50 +592,54 @@ export const Viewer = forwardRef<
             >
               <Home size={16} /> Reset view
             </button>
-            <button
-              type="button"
-              onClick={() => setWireframe(!wireframe)}
-              aria-pressed={wireframe}
-              title="Show wireframe"
-              aria-label="Show wireframe"
-            >
-              <Box size={17} />
-            </button>
-            {!!analysis && analysis.components > 1 && (
-              <button
-                type="button"
-                onClick={() => setShowParts(!showParts)}
-                disabled={!!printProgress}
-                aria-pressed={showParts}
-                title="Highlight separate parts"
-                aria-label="Highlight separate parts"
-              >
-                <Layers3 size={17} />
-              </button>
-            )}
-            {!!thin.triangles.length && (
-              <button
-                type="button"
-                onClick={() => setShowThin(!showThin)}
-                disabled={!!printProgress}
-                aria-pressed={showThin}
-                title="Highlight thin areas"
-                aria-label="Highlight thin areas"
-              >
-                <Ruler size={17} />
-              </button>
-            )}
-            {!!analysis?.floating && (
-              <button
-                type="button"
-                onClick={() => setHighlight(!highlight)}
-                disabled={!!printProgress}
-                aria-pressed={highlight}
-                title="Highlight floating parts"
-                aria-label="Highlight floating parts"
-              >
-                <ScanLine size={17} />
-              </button>
+            {tools && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setWireframe(!wireframe)}
+                  aria-pressed={wireframe}
+                  title="Show wireframe"
+                  aria-label="Show wireframe"
+                >
+                  <Box size={17} />
+                </button>
+                {!!analysis && analysis.components > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowParts(!showParts)}
+                    disabled={!!printProgress}
+                    aria-pressed={showParts}
+                    title="Highlight separate parts"
+                    aria-label="Highlight separate parts"
+                  >
+                    <Layers3 size={17} />
+                  </button>
+                )}
+                {!!thin.triangles.length && (
+                  <button
+                    type="button"
+                    onClick={() => setShowThin(!showThin)}
+                    disabled={!!printProgress}
+                    aria-pressed={showThin}
+                    title="Highlight thin areas"
+                    aria-label="Highlight thin areas"
+                  >
+                    <Ruler size={17} />
+                  </button>
+                )}
+                {!!analysis?.floating && (
+                  <button
+                    type="button"
+                    onClick={() => setHighlight(!highlight)}
+                    disabled={!!printProgress}
+                    aria-pressed={highlight}
+                    title="Highlight floating parts"
+                    aria-label="Highlight floating parts"
+                  >
+                    <ScanLine size={17} />
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

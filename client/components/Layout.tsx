@@ -56,6 +56,14 @@ export function Loading({ label = "Loading…" }: { label?: string }) {
     </div>
   );
 }
+/** A full-page loading state, aligned with the page content. */
+export function PageLoading() {
+  return (
+    <div className="page">
+      <Loading />
+    </div>
+  );
+}
 export const bytesLabel = (bytes: number) =>
   bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 export const dateLabel = (date: string) =>

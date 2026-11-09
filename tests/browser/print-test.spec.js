@@ -10,13 +10,12 @@ test("STL test preview highlights detached text, animates a fall and gives short
     if (message.type() === "error" && /THREE|shader|WebGL/.test(message.text())) errors.push(message.text());
   });
   await page.goto("http://127.0.0.1:4174/");
-  await page
-    .getByLabel("Upload a 3D printing file")
-    .setInputFiles({
-      name: "floating-text.stl",
-      mimeType: "application/octet-stream",
-      buffer: stl(new Float32Array([...cube(), ...box(5, 5, 22, 8, 3, 3)])),
-    });
+  await page.getByRole("radio", { name: /Advanced/ }).check();
+  await page.getByLabel("Upload a 3D printing file").setInputFiles({
+    name: "floating-text.stl",
+    mimeType: "application/octet-stream",
+    buffer: stl(new Float32Array([...cube(), ...box(5, 5, 22, 8, 3, 3)])),
+  });
   await expect(page.getByText("1 possibly floating part")).toBeVisible();
   await expect(page.getByRole("button", { name: "Highlight separate parts" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("button", { name: "Highlight floating parts" })).toHaveAttribute("aria-pressed", "true");
@@ -40,13 +39,12 @@ test("STL test preview highlights detached text, animates a fall and gives short
 
 test("local thin STL walls are highlighted, update with scale and keep one colour per part", async ({ page }) => {
   await page.goto("http://127.0.0.1:4174/");
-  await page
-    .getByLabel("Upload a 3D printing file")
-    .setInputFiles({
-      name: "thin-fin.stl",
-      mimeType: "application/octet-stream",
-      buffer: stl(new Float32Array([...cube(), ...box(0, 0, 20, 0.4, 10, 10)])),
-    });
+  await page.getByRole("radio", { name: /Advanced/ }).check();
+  await page.getByLabel("Upload a 3D printing file").setInputFiles({
+    name: "thin-fin.stl",
+    mimeType: "application/octet-stream",
+    buffer: stl(new Float32Array([...cube(), ...box(0, 0, 20, 0.4, 10, 10)])),
+  });
   await expect(page.getByText("Some areas may be too thin")).toBeVisible();
   await expect(page.getByRole("button", { name: "Highlight thin areas" })).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({ path: "test-results/test-print-thin-wall.png", fullPage: true });

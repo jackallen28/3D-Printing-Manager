@@ -9,6 +9,25 @@ These rules keep BNTS 3D Print Studio clear, calm and consistent. Read them befo
 
 Design for a student on a school laptop with a short attention span, and for a busy teacher between classes.
 
+### Beginner and Advanced
+
+Students choose a level on the upload page, and can switch at any time from the top of each step. The choice is remembered on that device. Beginner is the default.
+
+| | Beginner | Advanced adds |
+| --- | --- | --- |
+| 3D viewer | Model, issue highlights and their key, Reset view, Test print, supports preview | Wireframe and highlight toggles |
+| Model check | Plain warnings with what to do | A line of model facts (triangles, parts, size) |
+| Size | Slider and print size | Exact % box |
+| Colour | One colour for the whole model, from stock colours | Colour each part, Other colour, Special filament |
+| Separate objects | Kept as one file | Split into separate files |
+| Print options | Copies and notes | Supports, printer, quality, design link |
+
+Rules:
+
+- Beginner never hides a choice that's already in use. If a hidden option has a non-default value, it stays visible so nothing invisible can block a student.
+- Spark curiosity without clutter: on the check step, Beginner shows one line saying what Advanced would let them do with this particular model, with a single "Switch to Advanced" button. Don't add more prompts than that.
+- Fun, visual features (Test print, Show supports, issue highlights) stay in Beginner. They teach students how printing works.
+
 ## Tokens
 
 All values live as CSS custom properties at the top of `client/styles.css`. Don't use raw values in components.

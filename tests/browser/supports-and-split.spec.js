@@ -32,6 +32,7 @@ test("support information is grey, previews supports and marks a rough underside
 });
 test("joined multicolour areas are called sections and the single-part note is removed", async ({ page }) => {
   await page.goto("http://127.0.0.1:4174/");
+  await page.getByRole("radio", { name: /Advanced/ }).check();
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({ name: "joined-colours.3mf", mimeType: "model/3mf", buffer: multicolour3mf() });
@@ -48,13 +49,12 @@ test("students split an STL and upload each object with independent settings", a
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Print requests" })).toBeVisible();
   await page.goto("http://127.0.0.1:4174/");
-  await page
-    .getByLabel("Upload a 3D printing file")
-    .setInputFiles({
-      name: "nut-and-bolt.stl",
-      mimeType: "application/octet-stream",
-      buffer: stl(new Float32Array([...cube(), ...cube(35, 0, 0, 10)])),
-    });
+  await page.getByRole("radio", { name: /Advanced/ }).check();
+  await page.getByLabel("Upload a 3D printing file").setInputFiles({
+    name: "nut-and-bolt.stl",
+    mimeType: "application/octet-stream",
+    buffer: stl(new Float32Array([...cube(), ...cube(35, 0, 0, 10)])),
+  });
   await expect(page.getByText("This file has 2 separate objects.")).toBeVisible();
   const parts = page.getByRole("group", { name: "Model parts" }),
     colours = page.getByRole("radiogroup", { name: "Available print colours" });
@@ -68,7 +68,6 @@ test("students split an STL and upload each object with independent settings", a
   await expect(page.getByText("No problems found")).toBeVisible();
   await expect(colours.getByRole("radio", { name: "Blue", exact: true })).toBeChecked();
   await page.getByRole("combobox", { name: "Copies", exact: true }).selectOption("2");
-  await page.getByText("More options").click();
   await page.getByRole("combobox", { name: "Supports", exact: true }).selectOption("Prefer no supports");
   await page.getByLabel("Notes for your teacher").fill("Nut settings");
   await page.getByRole("button", { name: "Next file" }).click();
@@ -76,7 +75,6 @@ test("students split an STL and upload each object with independent settings", a
   await expect(page.getByText("No problems found")).toBeVisible();
   await expect(colours.getByRole("radio", { name: "Red", exact: true })).toBeChecked();
   await page.getByRole("spinbutton", { name: "Scale (%)" }).fill("75");
-  await page.getByText("More options").click();
   await page.getByRole("combobox", { name: "Supports", exact: true }).selectOption("Supports are okay");
   await page.getByLabel("Notes for your teacher").fill("Bolt settings");
   await page.getByRole("button", { name: "Continue" }).click();
@@ -114,6 +112,7 @@ test("split OBJ objects round-trip through separate 3MF previews", async ({ page
     })
     .join("");
   await page.goto("http://127.0.0.1:4174/");
+  await page.getByRole("radio", { name: /Advanced/ }).check();
   await page
     .getByLabel("Upload a 3D printing file")
     .setInputFiles({ name: "assembly.obj", mimeType: "model/obj", buffer: Buffer.from(obj) });

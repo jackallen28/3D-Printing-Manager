@@ -15,6 +15,12 @@ export function cantilever() {
   for(let i=0;i<6;i++){const next=(i+1)%6;faces.push([i,next+6,next],[i,i+6,next+6]);}
   return new Float32Array(faces.flatMap(face=>face.flatMap(index=>vertices[index])));
 }
+export function bridge() {
+  const profile=[[0,0],[10,0],[10,20],[30,20],[30,0],[40,0],[40,23],[0,23]],vertices=[...profile.map(([x,z])=>[x,0,z]),...profile.map(([x,z])=>[x,10,z])];
+  const caps=[[0,1,2],[0,2,7],[3,4,5],[3,5,6],[2,3,6],[2,6,7]],faces=[...caps,...caps.map(face=>face.map(i=>i+8).reverse())];
+  for(let i=0;i<8;i++){const next=(i+1)%8;faces.push([i,next+8,next],[i,i+8,next+8]);}
+  return new Float32Array(faces.flatMap(face=>face.flatMap(index=>vertices[index])));
+}
 export function multicolour3mf() {
   const positions=cube();const vertices=Array.from({length:positions.length/3},(_,i)=>`<vertex x="${positions[i*3]}" y="${positions[i*3+1]}" z="${positions[i*3+2]}"/>`).join('');
   const triangles=Array.from({length:positions.length/9},(_,t)=>`<triangle v1="${t*3}" v2="${t*3+1}" v3="${t*3+2}" pid="2" p1="${t%2}"/>`).join('');

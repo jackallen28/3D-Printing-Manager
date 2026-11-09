@@ -8,7 +8,7 @@ import {buildSupportPreview} from '../lib/support-preview';
 import {thinFeatures} from '../../shared/thickness.js';
 import type { LoadedModel } from '../lib/model';
 import type { Analysis } from '../types';
-export interface ViewerHandle { snapshot: () => Promise<Blob>; testPrint:()=>Promise<boolean>; stopTestPrint:()=>void; }
+export interface ViewerHandle { snapshot: () => Promise<Blob>; testPrint:()=>Promise<boolean>; removeSupports:()=>Promise<boolean>; stopTestPrint:()=>void; }
 export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: Analysis; mapping?: Record<string,string>; scalePercent?:number; advancedSources?:string[]; onPartSelect?:(source:string)=>void; supportsVisible?:boolean; onSupportsChange?:(visible:boolean)=>void; compact?: boolean }>(({model, analysis, mapping={}, scalePercent=100, advancedSources=[], onPartSelect, supportsVisible, onSupportsChange, compact}, ref) => {
   const partCallback=useRef(onPartSelect);partCallback.current=onPartSelect;
   const scaleRef=useRef(scalePercent);scaleRef.current=scalePercent;
@@ -20,6 +20,21 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
   const animation=useRef<ReturnType<typeof animatePrint>|null>(null);
   const [localSupports,setLocalSupports]=useState(false);const supportShown=supportsVisible??localSupports;const toggleSupports=()=>onSupportsChange?onSupportsChange(!supportShown):setLocalSupports(!supportShown);
   const thin=useMemo(()=>analysis&&model.format!=='obj'?thinFeatures(analysis.thicknessSamples,analysis.partBounds,analysis.triangleParts,scalePercent):{triangles:new Uint32Array()},[analysis,model.format,scalePercent]);
+  const showSupportSurface=()=>{
+    const r=runtime.current;if(!r||!analysis?.supportContacts.length)return;
+    const ground=Math.min(...analysis.partBounds.map(part=>part.min[2])),height=analysis.supportContacts.reduce((sum,contact)=>sum+(contact.top+contact.bottom)/2,0)/analysis.supportContacts.length;
+    const distance=r.camera.position.distanceTo(r.controls.target),target=new THREE.Vector3(0,(height-ground)*scaleRef.current/100,0);r.camera.position.copy(target).add(new THREE.Vector3(1.3,0,1.6).normalize().multiplyScalar(distance));r.controls.target.copy(target);r.controls.update();r.render();
+  };
+  const runPrint=async(removeSupports=false)=>{
+    const current=runtime.current;if(!current||!analysis||!analysis.complete||analysis.components>64)throw new Error('Ask your teacher to check this detailed model.');
+    animation.current?.stop();
+    showSupportSurface();
+    const visible=current.overlays.map(overlay=>overlay.visible);current.overlays.forEach(overlay=>overlay.visible=false);
+    const running=animatePrint({...current,content:current.object.userData.content,model,analysis,scale:scalePercent/100,mapping,advancedSources,supports:supportShown||removeSupports,removeSupports,onProgress:setPrintProgress});animation.current=running;
+    const finished=await running.finished;
+    if(animation.current===running){animation.current=null;if(runtime.current===current){current.overlays.forEach((overlay,i)=>overlay.visible=visible[i]);current.render();}}
+    return finished;
+  };
   useImperativeHandle(ref,()=>({
     snapshot:()=>new Promise((resolve,reject)=>{
       const current=runtime.current;if(!current)return reject(new Error('The 3D viewer is not ready.'));
@@ -27,16 +42,8 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
       const visible=current.overlays.map(overlay=>overlay.visible);current.overlays.forEach(overlay=>overlay.visible=false);current.render();
       current.renderer.domElement.toBlob(blob=>{current.overlays.forEach((overlay,i)=>overlay.visible=visible[i]);current.render();blob?resolve(blob):reject(new Error('The preview could not be captured.'));},'image/png');
     }),
-    testPrint:async()=>{
-      const current=runtime.current;if(!current||!analysis||!analysis.complete||analysis.components>64)throw new Error('Ask your teacher to check this detailed model.');
-      animation.current?.stop();
-      const visible=current.overlays.map(overlay=>overlay.visible);current.overlays.forEach(overlay=>overlay.visible=false);
-      const running=animatePrint({...current,content:current.object.userData.content,model,analysis,scale:scalePercent/100,mapping,advancedSources,onProgress:setPrintProgress});animation.current=running;
-      const finished=await running.finished;
-      if(animation.current===running)animation.current=null;
-      if(runtime.current===current){current.overlays.forEach((overlay,i)=>overlay.visible=visible[i]);current.render();}
-      return finished;
-    },
+    testPrint:()=>runPrint(),
+    removeSupports:()=>runPrint(true),
     stopTestPrint:()=>animation.current?.stop(),
   }));
   useEffect(()=> {
@@ -96,16 +103,12 @@ export const Viewer = forwardRef<ViewerHandle, { model: LoadedModel; analysis?: 
     }
     r.render();
   },[analysis,highlight,showParts,showThin,thin,model,supportShown]);
-  useEffect(()=>{
-    const r=runtime.current;if(!r||!supportShown||!analysis?.supportContacts.length)return;
-    const ground=Math.min(...analysis.partBounds.map(part=>part.min[2])),height=analysis.supportContacts.reduce((sum,contact)=>sum+(contact.top+contact.bottom)/2,0)/analysis.supportContacts.length;
-    const distance=r.camera.position.distanceTo(r.controls.target),target=new THREE.Vector3(0,(height-ground)*scaleRef.current/100,0);r.camera.position.copy(target).add(new THREE.Vector3(1.3,0,1.6).normalize().multiplyScalar(distance));r.controls.target.copy(target);r.controls.update();r.render();
-  },[supportShown,analysis,model]);
-  return <div className={'viewer '+(compact?'compact':'')} data-print-test-phase={printProgress?(printProgress.falling?'falling':'printing'):'idle'} data-support-preview={supportShown?'visible':'hidden'} data-support-count={analysis?.supportContacts.length||0}>
+  useEffect(()=>{if(supportShown)showSupportSurface();},[supportShown,analysis,model]);
+  return <div className={'viewer '+(compact?'compact':'')} data-print-test-phase={printProgress?(printProgress.falling?'falling':printProgress.removing?'removing-supports':printProgress.sagMm>0?'sagging':'printing'):'idle'} data-print-supports={printProgress?.supports?'enabled':'disabled'} data-print-sag-mm={printProgress?.sagMm.toFixed(2)||'0.00'} data-support-preview={supportShown?'visible':'hidden'} data-support-count={analysis?.supportContacts.length||0}>
     <div className="viewer-unit-label">{baseDimensions.map(n=>(n*scalePercent/100).toFixed(1)).join(' × ')} mm</div>
     <div className="viewer-canvas" ref={container}/>
     <div className="viewer-label"><span className="live-dot"/> INTERACTIVE 3D PREVIEW</div>
-    {printProgress?<div className="print-animation-label" role="status"><b>Test print · {printProgress.percent}%</b><span>Layer {printProgress.layer} of {printProgress.layers}{printProgress.falling?' · Floating parts are falling':''}</span></div>:analysis&&<div className="viewer-issue-key">{analysis.components>1&&<span><i className="parts-key"/>Separate parts outlined</span>}{analysis.floating>0&&<span><i className="floating-key"/>Floating parts</span>}{thin.triangles.length>0&&<span><i className="thin-key"/>Thin areas</span>}{analysis.supportContacts.length>0&&<button type="button" className="support-key-button" disabled={!!printProgress} aria-pressed={supportShown} onClick={toggleSupports}><i className="support-key"/>{supportShown?'Hide supports':'Simulate supports'}</button>}{supportShown&&analysis.supportContacts.length>0&&<span className="support-finish-note">Speckled areas may leave a rough underside.</span>}{analysis.problemEdges.length>0&&<span><i className="floating-key"/>Open or shared edges</span>}</div>}
+    {printProgress?<div className="print-animation-label" role="status"><b>{printProgress.removing?'Removing supports':'Test print'} · {printProgress.percent}%</b><span>{printProgress.removing?'Supports are being removed.':`${printProgress.supports?'With supports':'Without supports'} · Layer ${printProgress.layer} of ${printProgress.layers}`}</span>{printProgress.falling?<span>{printProgress.removing?'Loose parts fall away as supports are removed.':'Floating parts are falling.'}</span>:printProgress.sagMm>0?<span>Overhangs are sagging.</span>:printProgress.supports&&!printProgress.removing?<span>Supports hold the parts in place.</span>:null}</div>:analysis&&<div className="viewer-issue-key">{analysis.components>1&&<span><i className="parts-key"/>Separate parts outlined</span>}{analysis.floating>0&&<span><i className="floating-key"/>Floating parts</span>}{thin.triangles.length>0&&<span><i className="thin-key"/>Thin areas</span>}{analysis.supportContacts.length>0&&<button type="button" className="support-key-button" disabled={!!printProgress} aria-pressed={supportShown} onClick={toggleSupports}><i className="support-key"/>{supportShown?'Hide supports':'Simulate supports'}</button>}{supportShown&&analysis.supportContacts.length>0&&<span className="support-finish-note">Speckled areas may leave a rough underside.</span>}{analysis.problemEdges.length>0&&<span><i className="floating-key"/>Open or shared edges</span>}</div>}
     {error&&<div className="viewer-error" role="alert">{error}</div>}
     <div className="viewer-bottom"><span><Move size={13}/> Grid: 10 mm · Drag to rotate · scroll to zoom</span><div className="viewer-tools"><button type="button" className="viewer-home" onClick={()=>runtime.current?.reset()} title="Return to the starting view" aria-label="Home view"><Home size={15}/> Home view</button><button type="button" onClick={()=>setWireframe(!wireframe)} aria-pressed={wireframe} title="Wireframe" aria-label="Toggle wireframe"><Box size={17}/></button>{!!analysis&&analysis.components>1&&<button type="button" onClick={()=>setShowParts(!showParts)} disabled={!!printProgress} aria-pressed={showParts} title="Highlight separate parts" aria-label="Highlight separate parts"><Layers3 size={17}/></button>}{!!thin.triangles.length&&<button type="button" onClick={()=>setShowThin(!showThin)} disabled={!!printProgress} aria-pressed={showThin} title="Highlight thin areas" aria-label="Highlight thin areas"><Ruler size={17}/></button>}{!!analysis?.floating&&<button type="button" onClick={()=>setHighlight(!highlight)} disabled={!!printProgress} aria-pressed={highlight} title="Highlight floating parts" aria-label="Highlight floating parts"><ScanLine size={17}/></button>}</div></div>
   </div>;

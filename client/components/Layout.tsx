@@ -1,12 +1,28 @@
 import { cloneElement, useId, type ReactElement, type ReactNode } from "react";
 import { homeUrl, isAppsScript } from "../platform";
 import bntsMark from "../assets/bnts-pixels.svg?inline";
+// Slow drifting squares that echo the BNTS pixel mark. Positions are fixed so the pattern never jumps between renders.
+const SKY_COLOURS = ["var(--brand-lilac)", "var(--brand-purple)", "var(--accent)"];
+const skySquares = Array.from({ length: 17 }, (_, i) => ({
+  left: `${(i * 29 + 7) % 100}%`,
+  top: `${(i * 17 + 11) % 100}%`,
+  width: `${8 + (i % 4) * 8}px`,
+  height: `${8 + (i % 4) * 8}px`,
+  animationDelay: `-${i * 3}s`,
+  animationDuration: `${25 + i * 2}s`,
+  background: SKY_COLOURS[i % 3],
+}));
 export function Layout({ children, teacher = false }: { children: ReactNode; teacher?: boolean }) {
   return (
     <>
       <a className="skip-link" href="#main">
         Skip to content
       </a>
+      <div className="sky" aria-hidden="true">
+        {skySquares.map((style, i) => (
+          <i key={i} style={style} />
+        ))}
+      </div>
       <header className="site-header">
         <div className="site-header-inner">
           <a href={homeUrl} target={isAppsScript ? "_top" : undefined} className="brand">

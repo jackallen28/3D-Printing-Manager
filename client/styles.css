@@ -26,6 +26,9 @@
   --danger: #ff8a80;
   --danger-strong: #c43d34;
   --danger-soft: rgba(255, 138, 128, 0.1);
+  /* BNTS logo colours. Used only in the drifting background squares. */
+  --brand-lilac: #cfc2e0;
+  --brand-purple: #704988;
 
   /* Spacing: 4 point scale. */
   --s1: 4px;
@@ -179,6 +182,35 @@ code {
 }
 
 /* Page frame */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.sky i {
+  position: absolute;
+  opacity: 0.11;
+  border: 1px solid rgba(201, 229, 255, 0.4);
+  border-radius: var(--radius-inner);
+  animation: drift 50s linear infinite;
+}
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(80px) rotate(0);
+  }
+  50% {
+    transform: translateY(-80px) rotate(35deg);
+  }
+}
+.site-header,
+main,
+.site-footer {
+  position: relative;
+  z-index: 1;
+}
 .site-header {
   border-bottom: 1px solid var(--border);
 }
@@ -1764,7 +1796,8 @@ input[type="range"] {
   }
   .thumb-skeleton,
   .line-skeleton,
-  .viewer-skeleton {
+  .viewer-skeleton,
+  .sky i {
     animation: none;
   }
 }

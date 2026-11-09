@@ -18,9 +18,10 @@ All values live as CSS custom properties at the top of `client/styles.css`. Don'
 | Spacing | 4 point scale only: 4, 8, 12, 16, 24, 32, 48, 64 (`--s1` to `--s8`). |
 | Radius | `--radius` (8px) for every card, panel, button, input and badge. `--radius-inner` (4px) only for an element nested inside another rounded element. Circles only for colour swatches, step numbers and spinners. |
 | Type | One family: Atkinson Hyperlegible Next, self-hosted. It was designed by the Braille Institute for legibility, which suits a school audience. Sizes: 13, 14, 16, 18, 26, 32px. Nothing smaller than 13px. Body text is 16px. Weights: 400 for text, 600 for labels and headings, 700 for page titles only. |
-| Colour | Dark surfaces (`--bg`, `--surface`, `--surface-2`), one accent (BNTS teal `--accent`), and three status colours (success, warning, danger). Purple appears only in the BNTS logo and as the preview colour for special filament, where it carries meaning. |
+| Colour | Dark surfaces (`--bg`, `--surface`, `--surface-2`), one accent (BNTS teal `--accent`), and three status colours (success, warning, danger). Purple appears only in the BNTS logo, the drifting background squares, and as the preview colour for special filament, where it carries meaning. |
 | Depth | Panels are flat with a 1px border. The only shadow is `--shadow-overlay`, used for modals and the sticky save bar. |
-| Motion | Hover changes colour or border only, never position or size. The only animations are spinners, skeleton loaders and the progress bar. Everything respects `prefers-reduced-motion`. |
+| Motion | Hover changes colour or border only, never position or size. The only animations are spinners, skeleton loaders, the progress bar and the background squares. Everything respects `prefers-reduced-motion`. |
+| Background | Flat `--bg` with slow drifting squares behind the content (`.sky` in `Layout.tsx`). They echo the BNTS pixel mark, use the logo colours at 11% opacity, and stay behind solid panels so they never reduce readability. This is a deliberate brand element: keep it subtle, and don't add more background effects. |
 | Layout | Content width is 1080px; the student landing and success pages use 720px. Text is left-aligned. Forms use a two-column grid on desktop and one column on phones. Every page must work at 320px wide with no sideways scrolling. |
 
 ## Components
@@ -70,7 +71,7 @@ These are common signs of a rushed, "vibe-coded" interface. Don't add them.
 - Sparkle icons or sparkle emoji, especially in headings and buttons.
 - Emoji used as icons, bullets or in headings.
 - Random decorative status dots (such as a "live" dot that means nothing).
-- Floating or drifting background shapes and decorative looping animations.
+- Extra floating shapes, orbs or looping animations beyond the single drifting-squares background described above.
 - Hover effects that lift, rotate, bounce or scale cards and buttons.
 - Animations that wiggle, overshoot, stutter or start too early, and scroll-jacking.
 

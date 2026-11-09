@@ -12,6 +12,7 @@ function bntsApi(request) {
   try {
     if (!request || typeof request.path !== 'string' || request.path.length > 180) fail_('Invalid request.', 400);
     var path = request.path, method = request.method || 'GET', body = request.body || {};
+    if(path === '/classes/resolve' && method === 'POST')return ok_(resolveClass_(settings_(),body.schoolId,body.classCode));
     if (path === '/config' && method === 'GET') return ok_(publicConfig_());
     if (path === '/admin/login' && method === 'POST') return ok_(withLock_(function () { return login_(body.password); }));
     if (path === '/submissions' && method === 'POST') return ok_(withLock_(function () { return submit_(body); }));
@@ -28,6 +29,7 @@ function bntsApi(request) {
     if (path === '/admin/settings' && method === 'PUT') return ok_(withLock_(function () { return saveSettings_(body); }));
     if (path === '/admin/submissions' && method === 'GET') return ok_({ records: records_().filter(function (r) { return !expired_(r); }).map(publicRecord_) });
     if (path === '/admin/cleanup' && method === 'POST') return ok_(cleanupExpired_());
+    if(path==='/admin/submissions/bulk-status'&&method==='POST')return ok_(withLock_(function(){if(!Array.isArray(body.ids)||!body.ids.length||body.ids.length>200||body.ids.some(function(id){return !uuid_(id);})||['queued','printing','printed'].indexOf(body.status)<0)fail_('Choose files and a valid status.',400);var updated=0;body.ids.forEach(function(id){var record=record_(id);if(record&&!expired_(record)){record.status=body.status;Drive.Files.update({},record.recordFileId,jsonBlob_(record,record.filename+'.details.json'),{supportsAllDrives:true});updated++;}});return {updated:updated,skipped:body.ids.length-updated};}));
     var match = path.match(/^\/admin\/submissions\/([a-f0-9-]{36})(?:\/(model|preview|download))?$/i);
     if (!match) fail_('That page could not be found.', 404);
     var id = match[1], kind = match[2];
@@ -100,7 +102,7 @@ function settings_() {
 }
 function publicConfig_() {
   var settings = settings_();
-  return { schools: settings.schools, staff: settings.staff, classes: settings.classes, colours: BNTS_CATALOG.colours.filter(function (c) { return settings.colours.indexOf(c.id) >= 0; }), customColourEnabled: settings.customColourEnabled, acceptingUploads: !!settings.folderId && !!settings.schools.length && !!settings.staff.length, acceptedExtensions: acceptedExtensions_(settings), maxBytes: 10 * 1024 * 1024, localDemo: false };
+  return { schools: settings.schools, staff: settings.staff, classes: settings.classes.map(function(c){return {id:c.id,name:c.name,schoolId:c.schoolId};}), colours: BNTS_CATALOG.colours.filter(function (c) { return settings.colours.indexOf(c.id) >= 0; }), customColourEnabled: settings.customColourEnabled, acceptingUploads: !!settings.folderId && !!settings.schools.length && !!settings.staff.length, acceptedExtensions: acceptedExtensions_(settings), maxBytes: 10 * 1024 * 1024, localDemo: false };
 }
 function adminSettings_() {
   var p = props_();
@@ -126,15 +128,16 @@ function validateSettings_(input) {
     settings[kind] = values.map(function (item) {
       if (!item || !uuid_(item.id) || ids[item.id]) fail_('Invalid or duplicate setup option.', 400); ids[item.id] = true;
       var value = { id: item.id, name: shortText_(item.name, 80, true) };
-      if (kind === 'classes') { if (!uuid_(item.schoolId)) fail_('Choose a school for each class.', 400); value.schoolId = item.schoolId; }
+      if (kind === 'classes') { if (!uuid_(item.schoolId)) fail_('Choose a school for each class.', 400); value.schoolId = item.schoolId; value.code = shortText_(item.code,80,true); }
       return value;
     });
   });
+  var classCodes={};settings.classes.forEach(function(c){var key=c.schoolId+':'+normalizeClassCode_(c.code);if(classCodes[key])fail_('Each class in a school must have a different code.',400);classCodes[key]=true;});
   if (settings.classes.some(function (c) { return !settings.schools.some(function (s) { return s.id === c.schoolId; }); })) fail_('Each class must belong to a school.', 400);
   if (!Array.isArray(input.colours) || input.colours.length > 50 || input.colours.some(function (id) { return !BNTS_CATALOG.colours.some(function (c) { return c.id === id; }); })) fail_('Choose Bambu PLA colours from the list.', 400);
   settings.colours = Array.from(new Set(input.colours));
   if (!settings.colours.length && !settings.customColourEnabled) fail_('Offer at least one colour or custom requests.', 400);
-  var optional = BNTS_CATALOG.formats.filter(function (f) { return !f.required; }).map(function (f) { return f.id; });
+  var optional = BNTS_CATALOG.formats.filter(function (f) { return !f.required||f.id==='zip'; }).map(function (f) { return f.id; });
   var extras = input.extraFormats || [];
   if (!Array.isArray(extras) || extras.length > optional.length || extras.some(function (id) { return optional.indexOf(id) < 0; })) fail_('Choose file types from the list.', 400);
   settings.extraFormats = Array.from(new Set(extras));
@@ -163,17 +166,23 @@ function validateDetails_(input, settings) {
   ['requestId', 'schoolId', 'staffId'].forEach(function (key) { if (!uuid_(input[key])) fail_('Choose a valid school and staff member.', 400); value[key] = input[key]; });
   value.firstName = shortText_(input.firstName, 40, true);
   if (!/^[\p{L}\p{M} '\-]+$/u.test(value.firstName)) fail_('Use your first name only.', 400);
-  value.classId = input.classId === '' ? '' : shortText_(input.classId, 36, true);
+  value.classCode = shortText_(input.classCode || '',80,false);
+  var resolved=resolveClass_(settings,value.schoolId,value.classCode);value.classId=resolved.classId;
   var school = settings.schools.find(function (s) { return s.id === value.schoolId; }), staff = settings.staff.find(function (s) { return s.id === value.staffId; });
   var classroom = value.classId ? settings.classes.find(function (c) { return c.id === value.classId && c.schoolId === value.schoolId; }) : null;
   if (!school || !staff || (value.classId && !classroom)) fail_('Choose a current school, staff member and class.', 400);
   value.colour = shortText_(input.colour, 80, true); value.customColour = shortText_(input.customColour, 80, false);
   var available = BNTS_CATALOG.colours.filter(function (c) { return settings.colours.indexOf(c.id) >= 0; }).map(function (c) { return c.name; });
   if (settings.customColourEnabled) available.push('Custom');
+  available.push(BNTS_CATALOG.advancedFilament);
+  value.advancedFilamentNote=shortText_(input.advancedFilamentNote||'',800,false);
   if (available.indexOf(value.colour) < 0 || !Array.isArray(input.colourMapping) || input.colourMapping.length > 32) fail_('Choose available colour preferences.', 400);
-  value.colourMapping = input.colourMapping.map(function (m) { if (!m || available.indexOf(m.target) < 0 || !/^#[a-f\d]{6}$/i.test(m.source)) fail_('Choose valid model colour preferences.', 400); return { source: m.source, target: m.target }; });
+  value.colourMapping = input.colourMapping.map(function (m) { if (!m || available.indexOf(m.target) < 0 || !/^#[a-f\d]{6}$/i.test(m.source)) fail_('Choose valid model colour preferences.', 400); return { source: m.source, target: m.target, partName:shortText_(m.partName||'',80,false) }; });
   if ((value.colour === 'Custom' || value.colourMapping.some(function (m) { return m.target === 'Custom'; })) && !value.customColour) fail_('Describe your custom colour request.', 400);
-  ['size', 'supports', 'printer', 'quality'].forEach(function (key) { if (BNTS_CATALOG.preferences[key].indexOf(input[key]) < 0) fail_('Choose preferences from the list.', 400); value[key] = input[key]; });
+  value.scalePercent=input.scalePercent===undefined?100:input.scalePercent;if(typeof value.scalePercent!=='number'||!Number.isFinite(value.scalePercent)||value.scalePercent<1||value.scalePercent>1000)fail_('Choose a scale between 1% and 1000%.',400);value.size=value.scalePercent+'% scale';
+  value.dimensionsMm=input.dimensionsMm||null;if(value.dimensionsMm&&(!Array.isArray(value.dimensionsMm)||value.dimensionsMm.length!==3||value.dimensionsMm.some(function(v){return typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e9;})))fail_('Check the model dimensions in mm.',400);
+  if((value.colour===BNTS_CATALOG.advancedFilament||value.colourMapping.some(function(m){return m.target===BNTS_CATALOG.advancedFilament;}))&&!value.advancedFilamentNote)fail_('Describe the advanced filament you need.',400);
+  ['supports', 'printer', 'quality'].forEach(function (key) { if (BNTS_CATALOG.preferences[key].indexOf(input[key]) < 0) fail_('Choose preferences from the list.', 400); value[key] = input[key]; });
   if (!Number.isInteger(input.copies) || input.copies < 1 || input.copies > 10) fail_('Choose between 1 and 10 copies.', 400); value.copies = input.copies;
   value.notes = shortText_(input.notes, 800, false); value.designLink = shortText_(input.designLink, 500, false);
   if (value.designLink && !/^https:\/\/[a-z0-9.-]+(?::\d+)?(?:[/?#][^\s]*)?$/i.test(value.designLink)) fail_('Use a secure https design link.', 400);
@@ -185,8 +194,9 @@ function validateDetails_(input, settings) {
 function safePart_(value, max) { return String(value).normalize('NFKC').replace(/[^\p{L}\p{N} .-]/gu, '-').replace(/[ .-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max || 50) || 'unnamed'; }
 function makeRecord_(value, name, bytes) {
   var now = new Date(), date = Utilities.formatDate(now, 'Australia/Melbourne', 'yyyy-MM-dd'), id = Utilities.getUuid();
-  var colour = value.colourMapping.length > 1 ? Array.from(new Set(value.colourMapping.map(function (m) { return m.target === 'Custom' ? value.colourLabel : m.target; }))).join('+') : value.colourLabel;
-  var filename = [safePart_(value.school, 30), safePart_(colour, 35), date, safePart_(value.firstName, 24), safePart_(value.staff, 24), value.classroom ? safePart_(value.classroom, 24) : '', safePart_(value.copies + 'x ' + value.size + ' ' + value.supports + ' ' + value.printer + ' ' + value.quality, 70), value.notes ? safePart_(value.notes, 30) : ''].filter(Boolean).join('_').slice(0, 220) + '_' + id.slice(0, 8) + '.' + name.split('.').pop().toLowerCase();
+  var colours=Array.from(new Set((value.colourMapping.length?value.colourMapping.map(function(m){return m.target;}):[value.colour]).map(function(c){return c===BNTS_CATALOG.advancedFilament?'ADVANCED':BNTS_CATALOG.simpleColours[c]||'CUSTOM';})));
+  var colour=colours.length>1?'MULTICOLOUR':colours[0];
+  var filename=[safePart_(value.school,80),colour,date,safePart_(value.firstName,40)].join('_')+'.'+name.split('.').pop().toLowerCase();
   return Object.assign({}, value, { id: id, filename: filename, originalName: name, bytes: bytes, date: date, createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 14 * 86400000).toISOString(), status: 'queued' });
 }
 function submit_(body) {
@@ -218,6 +228,7 @@ function u16_(bytes, i) { return (bytes[i] & 255) + (bytes[i+1] & 255) * 256; }
 function u32_(bytes, i) { return u16_(bytes, i) + u16_(bytes, i+2) * 65536; }
 function validateModel_(bytes, name) {
   var ext = name.split('.').pop().toLowerCase(), format = BNTS_CATALOG.formats.find(function (f) { return f.extensions.indexOf(ext) >= 0; });
+  if(ext==='zip')fail_('ZIP archives must be extracted before uploading. Upload the CAD files inside.',400);
   if (!format) fail_('This file type is not supported.', 400);
   if (ext === 'step' || ext === 'stp') { var step = Utilities.newBlob(bytes).getDataAsString(); if (!/^\s*ISO-10303-21;/i.test(step) || !/END-ISO-10303-21;/i.test(step)) fail_('This is not a valid STEP file. Export it again from your CAD program.', 400); return; }
   if (!format.preview) return;
@@ -286,3 +297,6 @@ function cleanupExpired_() {
     } catch (e) { p.setProperty('CLEANUP_ERROR', 'Automatic cleanup failed. Check the deploying Google account’s Drive access and run cleanup again.'); throw e; }
   });
 }
+
+function normalizeClassCode_(value){return value.normalize('NFKC').trim().replace(/\s+/g,' ').toLowerCase();}
+function resolveClass_(settings,schoolId,code){code=shortText_(code||'',80,false);if(!code)return {classId:'',classroom:''};var c=settings.classes.find(function(c){return c.schoolId===schoolId&&c.code&&normalizeClassCode_(c.code)===normalizeClassCode_(code);});if(!c)fail_('Class code not found for this school. Check the code or leave it blank.',400);return {classId:c.id,classroom:c.name};}

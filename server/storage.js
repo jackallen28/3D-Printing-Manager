@@ -12,7 +12,7 @@ export class LocalStore {
   async init() { await mkdir(this.directory, { recursive: true }); }
   async settings() {
     try { return JSON.parse(await readFile(path.join(this.directory, 'settings.json'), 'utf8')); }
-    catch (e) { if (e.code !== 'ENOENT') throw e; return { ...cloneDefault(), folderId: 'local-demo-folder', schools: [{ id: '11111111-1111-4111-8111-111111111111', name: 'BNTS Demo School' }], staff: [{ id: '22222222-2222-4222-8222-222222222222', name: 'BNTS Team' }], classes: [{ id: '33333333-3333-4333-8333-333333333333', name: 'Year 8 · Design', schoolId: '11111111-1111-4111-8111-111111111111' }], colours: BAMBU_COLOURS.slice(0, 28).map(c => c.id) }; }
+    catch (e) { if (e.code !== 'ENOENT') throw e; return { ...cloneDefault(), folderId: 'local-demo-folder', schools: [{ id: '11111111-1111-4111-8111-111111111111', name: 'BNTS Demo School' }], staff: [{ id: '22222222-2222-4222-8222-222222222222', name: 'BNTS Team' }], classes: [{ id: '33333333-3333-4333-8333-333333333333', name: 'Year 8 · Design', code: 'DESIGN8', schoolId: '11111111-1111-4111-8111-111111111111' }], colours: BAMBU_COLOURS.slice(0, 28).map(c => c.id) }; }
   }
   async saveSettings(value) { await this.atomic('settings.json', JSON.stringify(value)); }
   async checkFolder() { return { name: 'Local development storage' }; }

@@ -4,6 +4,7 @@ const fail = message => { throw Object.assign(new Error(message), { status: 400 
 export async function validateModel(buffer, name) {
   const ext = name.toLowerCase().split('.').at(-1);
   const format = fileFormat(name);
+  if(ext==='zip')fail('ZIP archives must be extracted before uploading. Upload the CAD files inside.');
   if (!format) fail('This file type is not supported.');
   if (ext === 'step' || ext === 'stp') { const source=buffer.toString('utf8'); if (!/^\s*ISO-10303-21;/i.test(source) || !/END-ISO-10303-21;/i.test(source)) fail('This is not a valid STEP file. Export it again from your CAD program.'); return; }
   if (!format.preview) return; // Stored as an opaque original, never unpacked or executed.

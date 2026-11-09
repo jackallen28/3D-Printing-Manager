@@ -3,7 +3,7 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { unzipSync, strFromU8 } from 'fflate';
-export interface LoadedModel { object: THREE.Group; palette: string[]; notices: string[]; positions: Float32Array; }
+export interface LoadedModel { object: THREE.Group; palette: string[]; notices: string[]; positions: Float32Array; parts?: {source:string;name:string}[]; }
 const MAX_EXPANDED = 100 * 1024 * 1024;
 function checkZip(buffer: ArrayBuffer) {
   const view = new DataView(buffer); let eocd = -1;
@@ -111,14 +111,20 @@ function load3mf(buffer: ArrayBuffer) {
   return {object:group,palette:[...palette],notices};
 }
 export async function loadModel(file: File):Promise<LoadedModel> {
-  const buffer=await file.arrayBuffer(); let loaded:Pick<LoadedModel,'object'|'palette'|'notices'>;
+  const buffer=await file.arrayBuffer(); let loaded:Pick<LoadedModel,'object'|'palette'|'notices'|'parts'>;
   if(file.name.toLowerCase().endsWith('.3mf')) loaded=load3mf(buffer);
   else if(/\.(obj|ply)$/i.test(file.name)) {
     const object=/\.obj$/i.test(file.name)?new OBJLoader().parse(new TextDecoder().decode(buffer)):new THREE.Group();
     if(/\.ply$/i.test(file.name)) object.add(new THREE.Mesh(new PLYLoader().parse(buffer)));
+    if(/\.obj$/i.test(file.name)){
+      const grouped:THREE.Mesh[]=[];object.traverse(node=>{if(node instanceof THREE.Mesh&&Array.isArray(node.material)&&node.geometry.groups.length>1)grouped.push(node);});
+      for(const mesh of grouped){const geometry=mesh.geometry.index?mesh.geometry.toNonIndexed():mesh.geometry;const positions=geometry.getAttribute('position');const groups=new Map<number,number[]>();for(const group of geometry.groups){const vertices=groups.get(group.materialIndex||0)||[];for(let i=group.start;i<group.start+group.count;i++)vertices.push(positions.getX(i),positions.getY(i),positions.getZ(i));groups.set(group.materialIndex||0,vertices);}const wrapper=new THREE.Group();wrapper.position.copy(mesh.position);wrapper.quaternion.copy(mesh.quaternion);wrapper.scale.copy(mesh.scale);for(const[index,vertices]of groups){const partGeometry=new THREE.BufferGeometry();partGeometry.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));const part=new THREE.Mesh(partGeometry);const materials=mesh.material as THREE.Material[];part.name=(mesh.name||'Part')+' · '+(materials[index]?.name||'Area '+(index+1));wrapper.add(part);}mesh.parent?.add(wrapper);mesh.parent?.remove(mesh);}
+    }
     const palette=new Set<string>();
     object.traverse(node=>{if(node instanceof THREE.Mesh){node.geometry.computeVertexNormals();const colours=node.geometry.getAttribute('color');node.material=new THREE.MeshStandardMaterial({color:colours?'#ffffff':'#19c1ca',vertexColors:!!colours,roughness:0.55,metalness:0.04,side:THREE.DoubleSide});if(colours){for(let i=0;i<colours.count;i++){palette.add('#'+new THREE.Color().setRGB(colours.getX(i),colours.getY(i),colours.getZ(i)).getHexString());if(palette.size>32)throw new Error('This model has more than 32 colours. Export an STL for a single-colour preview.');}}else palette.add('#19c1ca');}});
-    loaded={object,palette:[...palette],notices:['This preview assumes millimetres and a Z-up orientation. OBJ material files and textures are not included.']};
+    let parts:LoadedModel['parts'];
+    if(/\.obj$/i.test(file.name)){const meshes:THREE.Mesh[]=[];object.traverse(node=>{if(node instanceof THREE.Mesh)meshes.push(node);});if(meshes.length>1&&meshes.length<=32){palette.clear();parts=meshes.map((mesh,i)=>{const source='#'+new THREE.Color().setHSL((0.48+i*0.6180339)%1,0.55,0.55).getHexString();mesh.geometry.deleteAttribute('color');mesh.material=new THREE.MeshStandardMaterial({color:source,roughness:0.55,metalness:0.04,side:THREE.DoubleSide});mesh.userData.colourSource=source;palette.add(source);return {source,name:mesh.name||'Part '+(i+1)};});}}
+    loaded={object,palette:[...palette],parts,notices:['This preview assumes millimetres and a Z-up orientation. OBJ material files and textures are not included.']};
   }
   else {
     const view=new DataView(buffer);
@@ -136,4 +142,18 @@ export async function loadModel(file: File):Promise<LoadedModel> {
   const positions=new Float32Array(length); let offset=0; for(const a of arrays){positions.set(a,offset);offset+=a.length;}
   if(!positions.length||positions.some(n=>!Number.isFinite(n))) throw new Error('This file does not contain a valid 3D model. Export an STL or 3MF from your CAD program.');
   return {...loaded,positions};
+}
+
+export function splitModelParts(model:LoadedModel, triangleParts:Uint32Array, count:number):LoadedModel {
+ if(model.parts?.length||!triangleParts.length||count<2||count>32||model.palette.length>1)return model;
+ const groups: number[][]=Array.from({length:count},()=>[]);
+ triangleParts.forEach((part,t)=>{for(let v=0;v<9;v++)groups[part].push(model.positions[t*9+v]);});
+ const object=new THREE.Group();const palette:string[]=[];const parts:{source:string;name:string}[]=[];
+ groups.forEach((positions,i)=>{const source='#'+new THREE.Color().setHSL((0.48+i*0.6180339)%1,0.55,0.55).getHexString();const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();const mesh=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color:source,roughness:0.55,metalness:0.04,side:THREE.DoubleSide}));mesh.name='Part '+(i+1);mesh.userData.colourSource=source;object.add(mesh);palette.push(source);parts.push({source,name:mesh.name});});
+ return {...model,object,palette,parts};
+}
+export async function prepareRequestedParts(model:LoadedModel,sources:string[]):Promise<LoadedModel> {
+ if(model.parts?.length||model.palette.length>1||sources.length<2)return model;
+ const {default:Worker}=await import('./analysis.worker?worker&inline');
+ return new Promise((resolve,reject)=>{const worker=new Worker();worker.onmessage=event=>{worker.terminate();if(event.data.error)reject(new Error(event.data.error));else resolve(splitModelParts(model,event.data.result.triangleParts,event.data.result.components));};worker.onerror=()=>{worker.terminate();reject(new Error('The model parts could not be read.'));};const positions=model.positions.slice();worker.postMessage(positions,[positions.buffer]);});
 }

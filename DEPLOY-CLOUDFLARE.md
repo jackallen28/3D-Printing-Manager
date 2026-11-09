@@ -37,7 +37,7 @@ The first deployment may show a setup message because the staff password is not 
 2. Add a **Secret** named `TEACHER_PASSWORD` with a unique password of at least 12 characters.
 3. Save/deploy the change if Cloudflare prompts you. Set a runtime secret, not just a build variable. Do not prefix it with `VITE_`.
 4. Open the Worker's `https://...workers.dev/teacher` address and sign in.
-5. In **Setup & supplies**, add schools and staff, optional classes, colours and extra formats. Click **Save setup**.
+5. In **Setup & supplies**, add schools and staff, optional classes with teacher-chosen class codes, colours and extra formats. Existing classes without a code need one entered before saving. Click **Save setup**.
 
 The database schema and random session signing key are created automatically. There is no folder link, Google login or storage key to configure. Changing the teacher password invalidates existing teacher sessions and pending upload tickets.
 
@@ -54,8 +54,8 @@ No GitHub Actions scheduler or Render service is needed. If a previous Render de
 ## 5. Test before sharing
 
 1. On the student page, check that it says **Up to 50 MB per file**.
-2. Upload a small STL, choose a colour and submit it with a first name, school and staff member.
-3. Find it in `/teacher`, open the preview and download the original.
+2. Upload a small STL, adjust its scale and check the dimensions in mm, choose a colour, and submit it with a first name, school and staff member. Enter a class code if one is provided, or leave it blank.
+3. Find it in `/teacher`, check its saved scale/colours, open the preview and download the original. You can also select several files to export them together or change their status.
 4. Check that it appears under the expected school/date/class prefix in the private R2 bucket.
 5. In **View at home** at the bottom of the student page, select the same school and type the same first name. Open the model.
 6. Delete the test submission in the teacher console. Repeat the home lookup; it should say **“This has been deleted.”**

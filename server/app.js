@@ -13,6 +13,7 @@ import { createAuth } from './auth.js';
 import { validateModel, validatePreview } from './validation.js';
 import { validateSubmission, makeRecord, settingsSchema, extractFolderId, isExpired } from './domain.js';
 import { BAMBU_COLOURS, MAX_BYTES } from '../shared/catalog.js';
+import { publicClasses, resolveClass } from '../shared/printing.js';
 import { acceptedExtensions } from '../shared/formats.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export function createApp({ store, password, secret, production = false, cleanupSecret = '', serveClient = true, uploadDirectory = path.join(tmpdir(), 'bnts-print-studio-uploads') }) {
@@ -35,8 +36,9 @@ export function createApp({ store, password, secret, production = false, cleanup
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.get('/api/config', async (req, res) => {
     const settings = await store.settings();
-    res.json({ schools: settings.schools, staff: settings.staff, classes: settings.classes, colours: BAMBU_COLOURS.filter(c => settings.colours.includes(c.id)), customColourEnabled: settings.customColourEnabled, acceptedExtensions: acceptedExtensions(settings), acceptingUploads: !!settings.folderId && !!settings.schools.length && !!settings.staff.length && (store.connected ?? true), localDemo: store.constructor.name === 'LocalStore', maxBytes: MAX_BYTES });
+    res.json({ schools: settings.schools, staff: settings.staff, classes: publicClasses(settings), colours: BAMBU_COLOURS.filter(c => settings.colours.includes(c.id)), customColourEnabled: settings.customColourEnabled, acceptedExtensions: acceptedExtensions(settings), acceptingUploads: !!settings.folderId && !!settings.schools.length && !!settings.staff.length && (store.connected ?? true), localDemo: store.constructor.name === 'LocalStore', maxBytes: MAX_BYTES });
   });
+  app.post('/api/classes/resolve',async(req,res)=>res.json(resolveClass(await store.settings(),req.body.schoolId,req.body.classCode)));
   app.post('/api/admin/login', rateLimit({ windowMs: 15 * 60000, limit: 8, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Too many sign-in attempts. Try again in 15 minutes.' } }), (req, res) => {
     if (!sameOrigin(req)) return res.status(403).json({ error: 'Open the teacher console on this site.' });
     auth.login(req, res);
@@ -89,6 +91,7 @@ export function createApp({ store, password, secret, production = false, cleanup
     if (!preview) res.attachment(record.filename);
     res.send(buffer);
   });
+  app.post('/api/admin/submissions/bulk-status',async(req,res)=>locked(async()=>{const ids=z.array(z.string().uuid()).min(1).max(200).parse(req.body.ids),status=z.enum(['queued','printing','printed']).parse(req.body.status);let updated=0;for(const id of ids){const record=await store.get(id);if(record&&!isExpired(record)){await store.status(record,status);updated++;}}res.json({updated,skipped:ids.length-updated});}));
   app.patch('/api/admin/submissions/:id', async (req, res) => locked(async () => {
     if (!z.uuid().safeParse(req.params.id).success) return res.sendStatus(404);
     const status = z.enum(['queued', 'printing', 'printed']).parse(req.body.status);

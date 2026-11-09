@@ -17,7 +17,7 @@ export async function setMeta(env, key, value) {
 export function keys(record) {
   const school=safePart(record.school,60)+'--'+record.schoolId.slice(0,8);
   const classroom=record.classroom ? safePart(record.classroom,60)+'--'+record.classId.slice(0,8)+'/' : '';
-  const model=`submissions/${school}/${record.date}/${classroom}${record.filename}`;
+  const model=`submissions/${school}/${record.date}/${classroom}${record.id}/${record.filename}`;
   return { model, preview:model+'.preview.png' };
 }
 export function publicRecord(row) { return JSON.parse(row.data); }

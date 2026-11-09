@@ -24,3 +24,5 @@ export const DEFAULT_SETTINGS = {
 export const RETENTION_DAYS = 14;
 export const MAX_BYTES = 50 * 1024 * 1024;
 export const APP_TAG = 'bnts-print-studio-v1';
+export const ADVANCED_FILAMENT = 'Advanced filament — request only';
+export const ADVANCED_HEX = '#9c55d8';

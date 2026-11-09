@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { BAMBU_COLOURS, MAX_BYTES } from '../shared/catalog.js';
+import { publicClasses, resolveClass, previewStyle } from '../shared/printing.js';
 import { acceptedExtensions } from '../shared/formats.js';
 import { cloudflareSettingsSchema, validateSubmission, makeRecord } from '../server/domain.js';
 import { initialiseDatabase } from './schema.js';
@@ -36,7 +37,7 @@ async function publicConfig(env) {
   const s=await settings(env);
   const {results:previousSchools}=await env.DB.prepare("SELECT school_id AS id, json_extract(data,'$.school') AS name FROM submissions WHERE state='ready' AND expires_at>? GROUP BY school_id").bind(Date.now()).all();
   const lookupSchools=[...s.schools,...previousSchools.filter(previous=>!s.schools.some(current=>current.id===previous.id))];
-  return {schools:s.schools,lookupSchools,staff:s.staff,classes:s.classes,colours:BAMBU_COLOURS.filter(c=>s.colours.includes(c.id)),customColourEnabled:s.customColourEnabled,acceptedExtensions:acceptedExtensions(s),maxBytes:MAX_BYTES,localDemo:false,acceptingUploads:configured(env)&&!!s.schools.length&&!!s.staff.length,uploadMode:'cloudflare',studentLookupSupported:true};
+  return {schools:s.schools,lookupSchools,staff:s.staff,classes:publicClasses(s),colours:BAMBU_COLOURS.filter(c=>s.colours.includes(c.id)),customColourEnabled:s.customColourEnabled,acceptedExtensions:acceptedExtensions(s),maxBytes:MAX_BYTES,localDemo:false,acceptingUploads:configured(env)&&!!s.schools.length&&!!s.staff.length,uploadMode:'cloudflare',studentLookupSupported:true};
 }
 async function initUpload(request,env) {
   sameOrigin(request);
@@ -47,6 +48,7 @@ async function initUpload(request,env) {
   if(!s.schools.length||!s.staff.length)failure('Your teacher is still setting up uploads.',503);
   const details=validateSubmission(body.details,s);
   if(typeof body.name!=='string'||!body.name.trim()||body.name.length>255||!acceptedExtensions(s).includes(body.name.split('.').at(-1).toLowerCase()))failure('This file type is not enabled. Choose an accepted format.');
+  if(body.name.toLowerCase().endsWith('.zip'))failure('ZIP archives must be extracted before uploading. Upload the CAD files inside.');
   if(!Number.isSafeInteger(body.bytes)||body.bytes<1||body.bytes>MAX_BYTES)failure('Files must be 50 MB or smaller.');
   if(!Number.isSafeInteger(body.previewBytes)||body.previewBytes<8||body.previewBytes>PREVIEW_LIMIT)failure('Return to the preview step to prepare a valid thumbnail.');
   let row=await findByRequest(env,details.requestId);
@@ -126,7 +128,7 @@ async function studentLookup(request,env) {
   const name=lookupName(body.firstName),exp=Date.now()+15*60*1000;
   const {results:rows}=await env.DB.prepare("SELECT id,data,expires_at FROM submissions WHERE school_id=? AND lookup_name=? AND state='ready' AND expires_at>? ORDER BY created_at DESC,id DESC LIMIT 31 OFFSET ?").bind(body.schoolId,name,Date.now(),offset).all();
   const token=await sign(env,{kind:'student',schoolId:body.schoolId,name,exp});
-  return json({token,nextOffset:rows.length>30?offset+30:null,files:rows.slice(0,30).map(row=>{const record=publicRecord(row);return{id:row.id,name:record.originalName,createdAt:record.createdAt,expiresAt:record.expiresAt};})});
+  return json({token,nextOffset:rows.length>30?offset+30:null,files:rows.slice(0,30).map(row=>{const record=publicRecord(row);return{id:row.id,name:record.originalName,createdAt:record.createdAt,expiresAt:record.expiresAt,view:previewStyle(record)};})});
 }
 async function admin(request,env,path) {
   const session=await teacherSession(env,request),method=request.method;
@@ -146,6 +148,11 @@ async function admin(request,env,path) {
     const {results:rows}=await env.DB.prepare("SELECT data FROM submissions WHERE state='ready' AND expires_at>? ORDER BY created_at DESC LIMIT 1000").bind(Date.now()).all();return json({records:rows.map(publicRecord)});
   }
   if(path==='/api/admin/cleanup'&&method==='POST')return json(await cleanup(env));
+  if(path==='/api/admin/submissions/bulk-status'&&method==='POST'){
+    const body=await readJson(request),ids=z.array(z.string().uuid()).min(1).max(200).parse(body.ids),status=z.enum(['queued','printing','printed']).parse(body.status);
+    const statements=[];for(let i=0;i<ids.length;i+=80){const batch=ids.slice(i,i+80);statements.push(env.DB.prepare(`UPDATE submissions SET data=json_set(data,'$.status',?) WHERE state='ready' AND expires_at>? AND id IN (${batch.map(()=>'?').join(',')})`).bind(status,Date.now(),...batch));}
+    const result=await env.DB.batch(statements);const updated=result.reduce((sum,r)=>sum+r.meta.changes,0);return json({updated,skipped:ids.length-updated});
+  }
   const match=path.match(/^\/api\/admin\/submissions\/([a-f\d-]{36})(?:\/(model|preview|download))?$/i);
   if(match&&UUID.test(match[1])){
     const row=await findById(env,match[1]);
@@ -168,6 +175,7 @@ async function dispatch(request,env) {
   await bootstrap(env);
   if(path==='/api/health'&&method==='GET')return json({ok:true,platform:'cloudflare'});
   if(path==='/api/config'&&method==='GET')return json(await publicConfig(env));
+  if(path==='/api/classes/resolve'&&method==='POST'){sameOrigin(request);await rateLimit(env,'class:'+await clientKey(request),120,60);const body=await readJson(request,1000);return json(resolveClass(await settings(env),body.schoolId,body.classCode));}
   if(path==='/api/admin/login'&&method==='POST'){
     sameOrigin(request);
     if(!configured(env))failure('Add a TEACHER_PASSWORD of at least 12 characters in Cloudflare settings.',503);

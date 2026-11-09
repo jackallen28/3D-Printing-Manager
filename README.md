@@ -10,15 +10,17 @@ A student file uploader and teacher console for Banyule Nillumbik Tech School. T
 
 - Drag and drop or choose a file, up to **50 MB** (52,428,800 bytes).
 - Preview STL, OBJ and 3MF in 3D; PLY previews can also be enabled by staff.
-- Choose Bambu PLA Basic colours, including separate preferences for multi-colour 3MF files and an optional custom colour request.
+- Scale the model up or down (1–1000%) in the viewer. Dimensions and the 10 mm reference grid always use millimetres.
+- Select model parts and choose colours; **Add another colour** helps assign another part. OBJ objects, material groups and small disconnected mesh components can be coloured separately. Multi-colour 3MF colour areas are selectable too. Most prints use one colour unless arranged otherwise.
+- Request an advanced filament when needed, describe the request, and see a glitter-purple preview. This is a visual placeholder, not a promise that a particular filament is stocked.
 - Review warnings about possible floating parts, disconnected parts, mesh errors, model size and supports.
-- Confirm the model, then enter first name, school, BNTS staff member and optional class.
-- Choose size, supports, printer, quality and copy count; add notes and an optional design link.
+- Confirm the model, then enter first name, school, BNTS staff member and an optional class code. Entering a valid code joins the selected school’s class; blank means no class. Codes are case-insensitive and are validated on the server.
+- Choose supports, printer, quality and copy count; add notes and an optional design link.
 - Review and submit. A receipt appears only after both the model and thumbnail are stored and the submission is complete.
 
-STL, OBJ, STEP (`.step` / `.stp`) and 3MF are always accepted. Staff can enable PLY, OFF, IGES, BREP, Fusion 360, Blender, ZIP and G-code. Types without a viewer display **“Preview not supported for this file type.”** and still upload normally.
+STL, OBJ, STEP (`.step` / `.stp`), 3MF and ZIP archives are always accepted. Staff can enable PLY, OFF, IGES, BREP, Fusion 360, Blender and G-code. ZIP archives are extracted in the browser: only enabled CAD formats are kept; images, documents, scripts, system files, nested ZIPs and G-code are ignored. Up to 20 CAD files and 50 MB of extracted CAD data are allowed. Each model is reviewed with its own scale and colour choices, then one student form submits the batch as individual files. ZIP archives themselves are rejected by the upload API and are never stored. Types without a viewer display **“Preview not supported for this file type.”** and still upload normally.
 
-The original file is preserved. Chosen colours and print settings are requests for staff to apply in the slicer; the app does not modify, repair, slice or execute the file. Slicer-specific 3MF painted facets and textures may not render accurately; detected unsupported features are explained. STL, OBJ and PLY assume millimetres and Z-up. Separate OBJ material files are not loaded.
+The original file is preserved. Chosen scale, dimensions, colours and print settings are saved as requests for staff to apply in the slicer; the app does not modify, repair, slice or execute the file. Slicer-specific 3MF painted facets and textures may not render accurately; detected unsupported features are explained. STL, OBJ and PLY assume millimetres and Z-up. Separate OBJ material files are not loaded.
 
 Model checks run in the browser and are advisory. Detailed topology checks are skipped above 200,000 triangles with an explicit notice. The Cloudflare server validates allowed types, declared/actual byte lengths, preview signature and form options; it streams originals to private storage without parsing large CAD files on the server. Staff must check originals in an appropriate CAD app/slicer.
 
@@ -26,7 +28,7 @@ Model checks run in the browser and are advisory. Detailed topology checks are s
 
 A small section at the bottom of the student page lets students choose their school and enter their first name. Matching models and their upload dates appear. A model opens in the 3D viewer when supported. If no matching unexpired files exist, the page says **“This has been deleted.”** Expired or removed models also return that message if an old view is opened.
 
-**School and first name are a lookup, not authentication.** Anyone who knows these details can find matching models. Students with the same first name at the same school see the same matches. The UI explains this. Results contain only original file names and dates; staff details, notes, design links, generated filenames and other form information are not returned. A browser that can render a model can obtain its original bytes, so this is not a way to keep model content secret from someone who knows the lookup details.
+**School and first name are a lookup, not authentication.** Anyone who knows these details can find matching models. Students with the same first name at the same school see the same matches. The UI explains this. Results contain original file names, dates and numeric preview settings (scale, colour swatches and glitter areas); staff details, notes, design links, generated filenames and other form information are not returned. A browser that can render a model can obtain its original bytes, so this is not a way to keep model content secret from someone who knows the lookup details.
 
 Lookups are rate limited, and short-lived view tokens restrict access to the matching school/name. A live database check blocks expired/deleted files even before scheduled cleanup runs. The teacher console remains password protected. For stricter privacy, a receipt code would be needed in addition to the requested school/name fields.
 
@@ -34,11 +36,12 @@ Lookups are rate limited, and short-lived view tokens restrict access to the mat
 
 Open `/teacher` and sign in with the staff password configured in Cloudflare. No teacher link appears in the student navigation.
 
-- Add/remove schools, staff and school-specific classes.
+- Add/remove schools, staff and school-specific classes. Choose any printable class code up to 80 characters; codes must be unique within a school. Existing classes have an editable code field and need a code before setup is saved. Codes are not included in the public configuration.
 - Select available PLA colours, allow custom requests and enable extra formats.
 - Browse School → Class, or School → Date for files with no class.
 - Search and filter files; sort by size, colour, name or date.
 - Open larger previews with the full student form, download originals and mark Queued / Printing / Printed.
+- Select multiple files to change their status in bulk or export them as a ZIP. Bulk exports contain original CAD files plus **Print settings.csv**, with scales, mm dimensions, per-part colours and staff notes. Chrome/Edge stream large exports directly to a chosen local file; other browsers use an in-memory export limited to 150 MB. Files with identical names remain separate in archive folders.
 - Delete a submission permanently, view storage use and run cleanup manually.
 
 There is no Google connection screen on the Cloudflare deployment. Student uploads become available after the teacher has added at least one school and staff member and saved setup.
@@ -53,14 +56,14 @@ Object keys group files by school, Melbourne date and optional class:
 submissions/
   School-name--school-id/
     YYYY-MM-DD/
-      School_Colour_Date_FirstName_Staff_Preferences_Note_Reference.stl
+      submission-id/School_WHITE_Date_FirstName.stl
       ...stl.preview.png
       Class-name--class-id/
-        School_Colour_Date_FirstName_Staff_Class_Preferences_Note_Reference.3mf
+        submission-id/School_MULTICOLOUR_Date_FirstName.3mf
         ...3mf.preview.png
 ```
 
-No class folder or “no class” text is added when no class is selected. Generated filenames start with school, colour and date. Complete comments, design links and preferences are stored in D1 and shown only to staff. Long filename values are shortened while retaining a unique reference.
+No class folder or “no class” text is added when no class is selected. Download filenames contain only **School_COLOUR_Date_FirstName.ext**, for example `School_WHITE_2026-11-09_Mia.stl`. Colours use short uppercase labels: Jade White becomes WHITE, Bambu Green becomes GREEN, and multiple requested colours become MULTICOLOUR. Class, staff, supports, printer, scale and notes are not added to filenames. R2 uses a separate submission ID folder to prevent collisions without changing the download name. Full settings and comments are stored in D1 and shown to staff; bulk exports also include the print-settings CSV.
 
 An atomic **8 GB cap** counts completed and pending uploads, including thumbnail allowance. New submissions stop when capacity is reached. Model uploads stream directly into R2 instead of retaining a 50 MB file in worker memory. Tickets are scoped to one submission, retries reuse the request ID, and originals are conditionally created to prevent overwriting completed content.
 
@@ -96,4 +99,4 @@ npm run deploy            # Deploy to the authenticated Cloudflare account
 
 Cloudflare tests run against the actual local Workers runtime with R2/D1 emulators, including a 50 MB upload, concurrent quota reservations, private downloads, scoped home viewing, expiry and scheduled cleanup. They do not establish that a live Cloudflare account is configured. Complete the live smoke test in the deployment guide before sharing the site.
 
-The repository retains the older Node/Google Drive and Apps Script implementations for reference. Their setup is in [legacy hosting documentation](docs/LEGACY-HOSTING.md); the Node option's `.env.example`, Render blueprint and GitHub cleanup workflow are not needed for Cloudflare. Existing Drive submissions are not automatically migrated to R2.
+The repository retains the older Node/Google Drive and Apps Script implementations for reference. Their setup is in [legacy hosting documentation](docs/LEGACY-HOSTING.md); the Node option's `.env.example`, Render blueprint and GitHub cleanup workflow are not needed for Cloudflare. Existing Drive submissions are not automatically migrated to R2. Existing stored submissions keep their original names and class assignments; the new filename pattern applies to new submissions.

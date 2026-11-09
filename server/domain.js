@@ -4,7 +4,7 @@ import { BAMBU_COLOURS, PREFERENCES, RETENTION_DAYS } from '../shared/catalog.js
 import { OPTIONAL_FORMATS } from '../shared/formats.js';
 export const text = (max = 100) => z.string().trim().max(max);
 const label = text(80).min(1).refine(s => !/[\x00-\x1f]/.test(s), 'Use ordinary text');
-export const settingsSchema = z.object({
+const settingsFields = {
   folderId: z.string().regex(/^[a-zA-Z0-9_-]{10,150}$/),
   schools: z.array(z.object({ id: z.uuid(), name: label })).max(100),
   staff: z.array(z.object({ id: z.uuid(), name: label })).max(100),
@@ -12,13 +12,16 @@ export const settingsSchema = z.object({
   colours: z.array(z.enum(BAMBU_COLOURS.map(c => c.id))).max(50),
   customColourEnabled: z.boolean(),
   extraFormats: z.array(z.enum(OPTIONAL_FORMATS)).max(OPTIONAL_FORMATS.length).default([]),
-}).superRefine((s, ctx) => {
+};
+function checkSettings(s, ctx) {
   for (const key of ['schools', 'staff', 'classes']) {
     if (new Set(s[key].map(x => x.id)).size !== s[key].length) ctx.addIssue({ code: 'custom', message: `Duplicate ${key} identifiers` });
   }
   if (s.classes.some(c => !s.schools.some(x => x.id === c.schoolId))) ctx.addIssue({ code: 'custom', message: 'Each class must belong to a school' });
   if (!s.colours.length && !s.customColourEnabled) ctx.addIssue({ code: 'custom', message: 'Offer at least one colour or custom colour requests' });
-});
+}
+export const settingsSchema = z.object(settingsFields).superRefine(checkSettings);
+export const cloudflareSettingsSchema = z.object({ ...settingsFields, folderId: z.literal('').default('') }).superRefine(checkSettings);
 export const submissionSchema = z.object({
   requestId: z.uuid(), firstName: text(40).min(1).regex(/^[\p{L}\p{M} '\-]+$/u, 'Use your first name only'),
   schoolId: z.uuid(), staffId: z.uuid(), classId: z.union([z.uuid(), z.literal('')]),

@@ -1,0 +1,3 @@
+# Copy to .dev.vars for LOCAL Cloudflare development only.
+# In production, set this as a Secret in the Worker runtime settings.
+TEACHER_PASSWORD=

@@ -12,3 +12,8 @@ apps-script/Index.html
 apps-script/Catalog.gs
 .clasp.json
 release/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.cloudflare-build/
+!.dev.vars.example

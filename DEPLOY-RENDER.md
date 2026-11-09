@@ -1,4 +1,6 @@
-# Deploy BNTS Print Studio on Render
+# Legacy option: deploy on Render
+
+**The current recommended deployment is Cloudflare**, with private R2 storage and no Google connection. See [DEPLOY-CLOUDFLARE.md](DEPLOY-CLOUDFLARE.md). The instructions below are retained for the older Google Drive backend.
 
 Use this option for **files up to 50 MB**. The Apps Script version has a 10 MB limit set by this app, and is intended for smaller uploads.
 

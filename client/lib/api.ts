@@ -1,5 +1,7 @@
 import { isAppsScript } from '../platform';
 let csrf = '';
+let uploadMode = 'multipart';
+export function setUploadMode(value?: string) { uploadMode = value || 'multipart'; }
 const sessionKey = 'bnts-teacher:' + (window.BNTS_GAS?.baseUrl || '');
 let gasToken = isAppsScript ? sessionStorage.getItem(sessionKey) || '' : '';
 async function gasRequest(path: string, options: RequestInit = {}, payload?: unknown): Promise<any> {
@@ -30,6 +32,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
   return result;
 }
 export function upload(form: FormData, onProgress: (value: number) => void): Promise<any> {
+  if (uploadMode === 'cloudflare') return cloudflareUpload(form,onProgress);
   if (isAppsScript) return (async () => {
     onProgress(10);
     const model = form.get('model') as File, preview = form.get('preview') as File;
@@ -64,3 +67,20 @@ export async function downloadModel(id: string, filename: string) {
   const file=await modelFile(id,filename);const url=URL.createObjectURL(file);const link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
 function decodeBase64(value: string): Uint8Array<ArrayBuffer> { const binary=atob(value);const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);return bytes; }
+
+async function cloudflareUpload(form: FormData,onProgress:(value:number)=>void) {
+ const model=form.get('model') as File,preview=form.get('preview') as File;
+ const pending=await api('/uploads/init',{method:'POST',body:JSON.stringify({details:JSON.parse(String(form.get('details'))),name:model.name,bytes:model.size,previewBytes:preview.size})});
+ if(pending.receipt)return pending.receipt;
+ const total=model.size+preview.size;
+ async function part(kind:'model'|'preview',file:File,done:boolean) {
+  if(done)return;
+  return new Promise<void>((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',`/api/uploads/${pending.id}/${kind}`);xhr.setRequestHeader('Authorization','Bearer '+pending.token);xhr.setRequestHeader('Content-Type',kind==='preview'?'image/png':'application/octet-stream');xhr.timeout=600000;
+   xhr.upload.onprogress=event=>{if(event.lengthComputable)onProgress(Math.min(99,Math.round(((kind==='preview'?model.size:0)+event.loaded)/total*100)));};
+   xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300){resolve();return;}try{reject(new Error(JSON.parse(xhr.responseText).error||'The upload failed. Please try again.'));}catch{reject(new Error('The upload could not be confirmed. Please try again.'));}};
+   xhr.onerror=()=>reject(new Error('Connection lost. Retry to continue the same submission.'));xhr.ontimeout=()=>reject(new Error('The upload timed out. Retry to continue the same submission.'));xhr.send(file);
+  });
+ }
+ await part('model',model,pending.modelDone);await part('preview',preview,pending.previewDone);
+ const result=await api(`/uploads/${pending.id}/complete`,{method:'POST',headers:{Authorization:'Bearer '+pending.token}});onProgress(100);return result;
+}

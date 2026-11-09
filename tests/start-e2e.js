@@ -20,4 +20,17 @@ testServer.get('/__gas',async(req,res)=>{
  res.type('html').send(html);
 });
 testServer.get('/__gas-frame',(req,res)=>res.type('html').send(`<html><body style="margin:0"><iframe title="Apps Script app" style="width:100%;height:100vh;border:0" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads allow-forms" src="/__gas${req.query.teacher?'?page=teacher':''}"></iframe></body></html>`));
+const {Miniflare}=await import('miniflare');
+const {initialiseDatabase}=await import('../cloudflare/schema.js');
+const {DEFAULT_SETTINGS}=await import('../shared/catalog.js');
+const mime={'.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.html':'text/html'};
+const {default:nodePath}=await import('node:path');
+const cf=new Miniflare({host:'127.0.0.1',port:4174,modules:true,scriptPath:'.cloudflare-build/worker.js',compatibilityDate:'2026-06-01',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],r2Buckets:['PRINTS'],bindings:{TEACHER_PASSWORD:'local-demo-teacher-password'},serviceBindings:{ASSETS:async request=>{
+ const pathname=new URL(request.url).pathname;let name=pathname.startsWith('/assets/')||pathname==='/bnts-pixels.svg'?'.'+pathname:'./index.html';
+ try{return new Response(await readFile(nodePath.join('dist',name)),{headers:{'Content-Type':mime[nodePath.extname(name)]||'application/octet-stream'}});}catch{return new Response('Not found',{status:404});}
+}}});
+await cf.ready;const cfDb=await cf.getD1Database('DB');await initialiseDatabase(cfDb);
+await cfDb.prepare('INSERT INTO app_meta(key,value) VALUES (?,?)').bind('settings',JSON.stringify({...DEFAULT_SETTINGS,folderId:'',schools:[{id:details().schoolId,name:'School A'}],staff:[{id:details().staffId,name:'Alex'}],colours:BAMBU_COLOURS.map(c=>c.id)})).run();
+testServer.post('/__cf-test/expire/:id',async(req,res)=>{await cfDb.prepare('UPDATE submissions SET expires_at=? WHERE id=?').bind(Date.now()-1000,req.params.id).run();res.json({ok:true});});
 testServer.use(app);testServer.listen(4173,'127.0.0.1');
+process.on('SIGTERM',()=>{cf.dispose().finally(()=>process.exit(0));});
